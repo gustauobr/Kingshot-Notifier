@@ -6,6 +6,9 @@ import signal
 import psutil
 import threading
 
+from dotenv import load_dotenv
+load_dotenv()
+
 class BotWatchdog:
     def __init__(self):
         self.bot_process = None
@@ -14,13 +17,19 @@ class BotWatchdog:
 
     def start_bot(self):
         """Start the DEV bot process."""
-        print("\n🟢 Starting Kingshot Dev Bot...")
+        print("\n🟢 Starting Kingshot Bot...")
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         env = os.environ.copy()
-        env["KINGSHOT_DEV_MODE"] = "1"
+        
+        # Use the token from environment
+        token = os.getenv("KINGSHOT_BOT_TOKEN")
+        if token:
+            env["KINGSHOT_BOT_TOKEN"] = token  # Map to what bot.py expects
+        else:
+            print("⚠️ Warning: KINGSHOT_BOT_TOKEN not found in environment")
 
-        # Optional: if you don’t use .env, include token manually
+        # Optional: if you don't use .env, include token manually
         # env["KINGSHOT_DEV_TOKEN"] = "your_token_here"
 
         self.bot_process = subprocess.Popen(
@@ -29,7 +38,7 @@ class BotWatchdog:
             env=env,
             creationflags=subprocess.CREATE_NEW_CONSOLE
         )
-        print(f"✅ Dev Bot started with PID: {self.bot_process.pid}")
+        print(f"✅ Bot started with PID: {self.bot_process.pid}")
 
     def stop_bot(self):
         """Stop the bot process gracefully."""

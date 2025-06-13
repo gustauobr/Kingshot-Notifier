@@ -21,7 +21,7 @@ if os.getenv("CODESPACES") or "codex" in sys.argv[0].lower():
     logging.info("🔄 Development mode detected - Discord connection disabled")
 
 # Validate token
-token = os.getenv("KINGSHOT_DEV_TOKEN")
+token = os.getenv("KINGSHOT_BOT_TOKEN")
 
 VERBOSE_ERRORS = os.getenv("KINGSHOT_VERBOSE_ERRORS") == "1"
 
@@ -121,8 +121,17 @@ async def main():
         if DISCORD_ENABLED:
             # Sync commands after all cogs are loaded
             log.info("Syncing commands...")
+            # Sync globally first
             synced = await bot.tree.sync()
             log.info(f"✅ Globally synced {len(synced)} commands.")
+            
+            # Sync for each guild individually
+            for guild in bot.guilds:
+                try:
+                    await bot.tree.sync(guild=guild)
+                    log.info(f"🔁 Synced commands in {guild.name}")
+                except Exception as e:
+                    log.error(f"Failed to sync commands in {guild.name}: {e}")
 
         # Start terminal input loop
         asyncio.create_task(terminal_input_loop(bot))
