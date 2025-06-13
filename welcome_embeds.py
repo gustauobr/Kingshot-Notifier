@@ -8,7 +8,9 @@ from config_helpers import (
 
 # Common embed settings
 EMBED_COLOR = discord.Color.blue()
-FOOTER_TEXT = "Settings can be modified using /setbearpings, /setarenaping, or /seteventpings"
+
+# Version tracking for welcome embeds
+WELCOME_EMBED_VERSION = "2.0"  # Increment this when making changes to welcome embeds
 
 def _format_phase_line(emoji: str, name: str, description: str) -> str:
     """Format a single phase line with consistent styling"""
@@ -36,11 +38,23 @@ def make_bear_welcome_embed(guild_id: str) -> discord.Embed:
         _format_phase_line("🏆", "Victory", "when the Bear is slain!")
     ])
     
+    # Add command section
+    lines.extend([
+        "",
+        "🗓️ Schedule a Bear: `/setbeartime`",
+        "📂 Manage Bears: `/cancelbear` / `/listbears`",
+        "",
+        "⚙️ Settings can be modified using `/setbearpings`"
+    ])
+    
     embed = discord.Embed(
-        title="🐻 Bear Attack Notifications",
+        title="<:bear:1375525056725258302> Bear Attack Notifications",
         description="\n".join(lines),
         color=EMBED_COLOR
     )
+    
+    # Add thumbnail
+    embed.set_thumbnail(url="https://cdn.discordapp.com/emojis/1375520846407270561.png")
     
     # Add a note if all pings are disabled
     if not settings.incoming_enabled and not settings.pre_attack_enabled:
@@ -50,7 +64,7 @@ def make_bear_welcome_embed(guild_id: str) -> discord.Embed:
             inline=False
         )
     
-    embed.set_footer(text=FOOTER_TEXT)
+    embed.set_footer(text="👑 Kingshot Bot • Bear Alerts • UTC")
     return embed
 
 def make_arena_welcome_embed(guild_id: str) -> discord.Embed:
@@ -64,13 +78,19 @@ def make_arena_welcome_embed(guild_id: str) -> discord.Embed:
     
     # Add the ping phase if enabled
     if settings.ping_enabled:
-        lines.append(_format_phase_line("⚔", "Opening Soon", f"{settings.ping_offset} minutes before the Arena opens"))
+        lines.append(_format_phase_line("⚔️", "Opening Soon", f"{settings.ping_offset} minutes before the Arena opens"))
     
     # Always include the opening phase
     lines.append(_format_phase_line("🎯", "Arena Open", "when the Arena becomes available"))
     
+    # Add settings section
+    lines.extend([
+        "",
+        "⚙️ Settings can be modified using `/setarenaping`"
+    ])
+    
     embed = discord.Embed(
-        title="⚔ Arena Notifications",
+        title="⚔️ Arena Notifications",
         description="\n".join(lines),
         color=EMBED_COLOR
     )
@@ -83,7 +103,7 @@ def make_arena_welcome_embed(guild_id: str) -> discord.Embed:
             inline=False
         )
     
-    embed.set_footer(text=FOOTER_TEXT)
+    embed.set_footer(text="👑 Kingshot Bot • Arena Alerts • UTC")
     return embed
 
 def make_event_welcome_embed(guild_id: str) -> discord.Embed:
@@ -105,6 +125,15 @@ def make_event_welcome_embed(guild_id: str) -> discord.Embed:
     # Always include the event start phase
     lines.append(_format_phase_line("🎯", "Event Start", "when the event begins"))
     
+    # Add command section
+    lines.extend([
+        "",
+        "🗓️ Schedule Event: `/addevent`",
+        "📂 Manage Events: `/cancelevent` / `/listevents`",
+        "",
+        "⚙️ Settings can be modified using `/seteventpings`"
+    ])
+    
     embed = discord.Embed(
         title="🏆 Event Notifications",
         description="\n".join(lines),
@@ -119,7 +148,7 @@ def make_event_welcome_embed(guild_id: str) -> discord.Embed:
             inline=False
         )
     
-    embed.set_footer(text=FOOTER_TEXT)
+    embed.set_footer(text="👑 Kingshot Bot • Event Alerts • UTC")
     return embed
 
 def get_all_welcome_embeds(guild_id: str) -> Tuple[discord.Embed, discord.Embed, discord.Embed]:

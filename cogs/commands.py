@@ -6,7 +6,7 @@ from discord.ext import commands
 from discord import app_commands, ui, Interaction, Embed
 
 from config import EMBED_COLOR_PRIMARY
-from helpers import ensure_channel, update_guild_count
+from helpers import ensure_channel, update_guild_count, update_role_counts
 from admin_tools import live_feed
 
 log = logging.getLogger("kingshot")
@@ -44,6 +44,7 @@ class Core(commands.Cog):
                 None,
             )
             await update_guild_count(self.bot)
+            await update_role_counts(self.bot)
             return
 
         embed = Embed(
@@ -79,6 +80,7 @@ class Core(commands.Cog):
             dest,
         )
         await update_guild_count(self.bot)
+        await update_role_counts(self.bot)
 
     @commands.Cog.listener()
     async def on_guild_remove(self, guild: discord.Guild):
@@ -90,6 +92,7 @@ class Core(commands.Cog):
             None,
         )
         await update_guild_count(self.bot)
+        await update_role_counts(self.bot)
 
     @app_commands.command(
         name="synccommands", description="🔧 Force sync of slash commands (Admins only)"

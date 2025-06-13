@@ -18,7 +18,8 @@ from welcome_embeds import (
     make_bear_welcome_embed,
     make_arena_welcome_embed,
     make_event_welcome_embed,
-    get_all_welcome_embeds
+    get_all_welcome_embeds,
+    WELCOME_EMBED_VERSION
 )
 from cogs.reaction import ReactionRole
 
@@ -211,6 +212,9 @@ class SimpleChannelSelector:
             em = await event_ch.send(embed=make_event_welcome_embed(guild_id))
             guild_cfg["event"]["welcome_message_id"] = em.id
         
+        # Set welcome embed version
+        guild_cfg["welcome_embed_version"] = WELCOME_EMBED_VERSION
+        
         # Create roles and save their IDs
         bear_role = await ensure_role(self.interaction.guild, "Bear 🐻", discord.Color.orange())
         arena_role = await ensure_role(self.interaction.guild, "Arena ⚔️", discord.Color.red())
@@ -319,6 +323,129 @@ async def ensure_category(guild: discord.Guild) -> discord.CategoryChannel:
 class Installer(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
+        # Start welcome message update task
+        self._update_task = asyncio.create_task(self._update_welcome_messages())
+
+    def cog_unload(self):
+        # Cancel the update task
+        if hasattr(self, '_update_task'):
+            self._update_task.cancel()
+
+    async def _update_welcome_messages(self):
+        """Update welcome messages on startup with new formatting"""
+        await self.bot.wait_until_ready()
+        
+        for guild in self.bot.guilds:
+            guild_id = str(guild.id)
+            guild_cfg = gcfg.get(guild_id, {})
+            
+            if not guild_cfg.get("mode"):
+                continue  # Not installed
+            
+            # Check if welcome messages need updating
+            current_version = guild_cfg.get("welcome_embed_version", "1.0")
+            if current_version == WELCOME_EMBED_VERSION:
+                # Already up to date, skip
+                continue
+                
+            live_feed.log(
+                "Updating welcome messages",
+                f"Guild: {guild.name} • Version: {current_version} → {WELCOME_EMBED_VERSION}",
+                guild,
+                None
+            )
+            
+            updated_count = 0
+            
+            # Update bear welcome message
+            bear_cfg = guild_cfg.get("bear", {})
+            if bear_cfg.get("welcome_message_id") and bear_cfg.get("channel_id"):
+                bear_ch = guild.get_channel(bear_cfg["channel_id"])
+                if bear_ch:
+                    try:
+                        msg = await bear_ch.fetch_message(bear_cfg["welcome_message_id"])
+                        new_embed = make_bear_welcome_embed(guild_id)
+                        await msg.edit(embed=new_embed)
+                        updated_count += 1
+                        live_feed.log(
+                            "Updated bear welcome message",
+                            f"Guild: {guild.name} • Channel: #{bear_ch.name}",
+                            guild,
+                            bear_ch
+                        )
+                    except (discord.NotFound, discord.Forbidden):
+                        live_feed.log(
+                            "Failed to update bear welcome message",
+                            f"Guild: {guild.name} • Message not found or no permission",
+                            guild,
+                            None
+                        )
+            
+            # Update arena welcome message
+            arena_cfg = guild_cfg.get("arena", {})
+            if arena_cfg.get("welcome_message_id") and arena_cfg.get("channel_id"):
+                arena_ch = guild.get_channel(arena_cfg["channel_id"])
+                if arena_ch:
+                    try:
+                        msg = await arena_ch.fetch_message(arena_cfg["welcome_message_id"])
+                        new_embed = make_arena_welcome_embed(guild_id)
+                        await msg.edit(embed=new_embed)
+                        updated_count += 1
+                        live_feed.log(
+                            "Updated arena welcome message",
+                            f"Guild: {guild.name} • Channel: #{arena_ch.name}",
+                            guild,
+                            arena_ch
+                        )
+                    except (discord.NotFound, discord.Forbidden):
+                        live_feed.log(
+                            "Failed to update arena welcome message",
+                            f"Guild: {guild.name} • Message not found or no permission",
+                            guild,
+                            None
+                        )
+            
+            # Update event welcome message
+            event_cfg = guild_cfg.get("event", {})
+            if event_cfg.get("welcome_message_id") and event_cfg.get("channel_id"):
+                event_ch = guild.get_channel(event_cfg["channel_id"])
+                if event_ch:
+                    try:
+                        msg = await event_ch.fetch_message(event_cfg["welcome_message_id"])
+                        new_embed = make_event_welcome_embed(guild_id)
+                        await msg.edit(embed=new_embed)
+                        updated_count += 1
+                        live_feed.log(
+                            "Updated event welcome message",
+                            f"Guild: {guild.name} • Channel: #{event_ch.name}",
+                            guild,
+                            event_ch
+                        )
+                    except (discord.NotFound, discord.Forbidden):
+                        live_feed.log(
+                            "Failed to update event welcome message",
+                            f"Guild: {guild.name} • Message not found or no permission",
+                            guild,
+                            None
+                        )
+            
+            # Update version in config if any messages were updated
+            if updated_count > 0:
+                guild_cfg["welcome_embed_version"] = WELCOME_EMBED_VERSION
+                save_config(gcfg)
+                live_feed.log(
+                    "Welcome messages updated",
+                    f"Guild: {guild.name} • Updated: {updated_count} messages • Version: {WELCOME_EMBED_VERSION}",
+                    guild,
+                    None
+                )
+            else:
+                live_feed.log(
+                    "No welcome messages to update",
+                    f"Guild: {guild.name} • Version: {WELCOME_EMBED_VERSION}",
+                    guild,
+                    None
+                )
 
     @app_commands.command(name="install", description="⚙️ Set up the bot (auto or manual mode)")
     @app_commands.describe(mode="Choose 'auto' or 'manual'")
@@ -416,6 +543,7 @@ class Installer(commands.Cog):
             cfg["bear"]["welcome_message_id"] = bm.id
             cfg["arena"]["welcome_message_id"] = am.id
             cfg["event"]["welcome_message_id"] = em.id
+            cfg["welcome_embed_version"] = WELCOME_EMBED_VERSION
 
             live_feed.log(
                 "Sent welcome messages",

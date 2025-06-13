@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from config import DEFAULT_ACTIVITY, DEFAULT_ACTIVITY_TYPE, DEFAULT_STATUS
 import sys
 from admin_tools import start_admin_tools, handle_command
-from helpers import update_guild_count, start_config_writer
+from helpers import update_guild_count, update_role_counts, start_config_writer
 
 load_dotenv()  # ⬅️ This loads variables from .env into os.environ
 
@@ -189,6 +189,20 @@ async def on_ready():
     log.info("Admin tools started")
 
     await update_guild_count(bot)
+    await update_role_counts(bot)
+
+    # Start periodic update task
+    async def periodic_updates():
+        while True:
+            try:
+                await asyncio.sleep(300)  # Update every 5 minutes
+                await update_guild_count(bot)
+                await update_role_counts(bot)
+            except Exception as e:
+                log.error(f"Error in periodic updates: {e}")
+    
+    asyncio.create_task(periodic_updates())
+    log.info("Periodic updates started")
 
     for guild in bot.guilds:
         log.info(f"Available in: {guild.name} ({guild.id})")

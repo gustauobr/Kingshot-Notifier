@@ -55,9 +55,9 @@ coverage.xml
 # VS Code
 .vscode/
 
-# Backup folders
-BEARBACKUP/
-BACKUP PRE GPT/
+
+# Logs
+logs/
 
 # Local config
 bot_config.json
@@ -66,6 +66,7 @@ logic.txt
 railyway.json
 admin_tools.py
 .env
+
 
 # Windows
 Thumbs.db

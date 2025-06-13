@@ -156,9 +156,81 @@ async def update_guild_count(bot: commands.Bot) -> None:
     if not isinstance(channel, discord.VoiceChannel):
         return
 
-    new_name = f"{len(bot.guilds)}-servers!"
+    new_name = f"{len(bot.guilds)} 👑 servers!"
     if channel.name != new_name:
         try:
             await channel.edit(name=new_name)
         except discord.Forbidden:
             pass
+
+async def update_role_counts(bot: commands.Bot) -> None:
+    """Update master guild voice channels with role counts."""
+    from config import MASTER_GUILD_ID
+    
+    # Role count channel IDs
+    BEAR_COUNT_CHANNEL_ID = 1382954693034246235
+    ARENA_COUNT_CHANNEL_ID = 1382954743206510633
+    EVENT_COUNT_CHANNEL_ID = 1382954792468353056
+
+    guild = bot.get_guild(MASTER_GUILD_ID)
+    if not guild:
+        return
+
+    # Count members with each role across all guilds
+    bear_count = 0
+    arena_count = 0
+    event_count = 0
+
+    for bot_guild in bot.guilds:
+        guild_cfg = gcfg.get(str(bot_guild.id), {})
+        
+        # Count bear role members
+        bear_role_id = guild_cfg.get("bear", {}).get("role_id")
+        if bear_role_id:
+            bear_role = bot_guild.get_role(bear_role_id)
+            if bear_role:
+                bear_count += len(bear_role.members)
+        
+        # Count arena role members
+        arena_role_id = guild_cfg.get("arena", {}).get("role_id")
+        if arena_role_id:
+            arena_role = bot_guild.get_role(arena_role_id)
+            if arena_role:
+                arena_count += len(arena_role.members)
+        
+        # Count event role members
+        event_role_id = guild_cfg.get("event", {}).get("role_id")
+        if event_role_id:
+            event_role = bot_guild.get_role(event_role_id)
+            if event_role:
+                event_count += len(event_role.members)
+
+    # Update bear count channel
+    bear_channel = guild.get_channel(BEAR_COUNT_CHANNEL_ID)
+    if isinstance(bear_channel, discord.VoiceChannel):
+        new_name = f"{bear_count} 🐻 watchers"
+        if bear_channel.name != new_name:
+            try:
+                await bear_channel.edit(name=new_name)
+            except discord.Forbidden:
+                pass
+
+    # Update arena count channel
+    arena_channel = guild.get_channel(ARENA_COUNT_CHANNEL_ID)
+    if isinstance(arena_channel, discord.VoiceChannel):
+        new_name = f"{arena_count} ⚔️ watchers"
+        if arena_channel.name != new_name:
+            try:
+                await arena_channel.edit(name=new_name)
+            except discord.Forbidden:
+                pass
+
+    # Update event count channel
+    event_channel = guild.get_channel(EVENT_COUNT_CHANNEL_ID)
+    if isinstance(event_channel, discord.VoiceChannel):
+        new_name = f"{event_count} 🏆 watchers"
+        if event_channel.name != new_name:
+            try:
+                await event_channel.edit(name=new_name)
+            except discord.Forbidden:
+                pass
