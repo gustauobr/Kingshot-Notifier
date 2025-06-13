@@ -61,9 +61,10 @@ BACKUP PRE GPT/
 
 # Local config
 bot_config.json
-watchdog.py
+bot_config_dev.json
+logic.txt
 railyway.json
-command_center.py
+admin_tools.py
 .env
 
 # Windows

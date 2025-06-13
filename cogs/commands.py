@@ -6,8 +6,8 @@ from discord.ext import commands
 from discord import app_commands, ui, Interaction, Embed
 
 from config import EMBED_COLOR_PRIMARY
-from helpers import ensure_channel
-from command_center import live_feed
+from helpers import ensure_channel, update_guild_count
+from admin_tools import live_feed
 
 log = logging.getLogger("kingshot")
 
@@ -25,21 +25,25 @@ class Core(commands.Cog):
             "Bot joined new guild",
             f"Guild: {guild.name} • Members: {guild.member_count}",
             guild,
-            None
+            None,
         )
         # Send a welcome embed in the system channel or first writable channel
         dest = guild.system_channel or next(
-            (c for c in guild.text_channels
-             if c.permissions_for(guild.me).send_messages),
-            None
+            (
+                c
+                for c in guild.text_channels
+                if c.permissions_for(guild.me).send_messages
+            ),
+            None,
         )
         if not dest:
             live_feed.log(
                 "Failed to send welcome message",
                 f"Guild: {guild.name} • Error: No suitable channel found",
                 guild,
-                None
+                None,
             )
+            await update_guild_count(self.bot)
             return
 
         embed = Embed(
@@ -50,30 +54,45 @@ class Core(commands.Cog):
                 "Prefer to choose your own channels? Use `/install manual` instead.\n\n"
                 "Need help? Use `/help` for a full list of commands."
             ),
-            color=EMBED_COLOR_PRIMARY
+            color=EMBED_COLOR_PRIMARY,
         )
         embed.set_thumbnail(
-            url=self.bot.user.avatar.url
+            url=(
+                self.bot.user.avatar.url
                 if self.bot.user.avatar
                 else discord.Embed.Empty
+            )
         )
         embed.set_footer(
             text="made by ninjardx 🏆",
-            icon_url=self.bot.user.avatar.url
+            icon_url=(
+                self.bot.user.avatar.url
                 if self.bot.user.avatar
                 else discord.Embed.Empty
+            ),
         )
         await dest.send(embed=embed)
         live_feed.log(
             "Sent welcome message",
             f"Guild: {guild.name} • Channel: #{dest.name}",
             guild,
-            dest
+            dest,
         )
+        await update_guild_count(self.bot)
+
+    @commands.Cog.listener()
+    async def on_guild_remove(self, guild: discord.Guild):
+        log.info(f"Left guild: {guild.name} ({guild.id})")
+        live_feed.log(
+            "Bot removed from guild",
+            f"Guild: {guild.name}",
+            guild,
+            None,
+        )
+        await update_guild_count(self.bot)
 
     @app_commands.command(
-        name="synccommands",
-        description="🔧 Force sync of slash commands (Admins only)"
+        name="synccommands", description="🔧 Force sync of slash commands (Admins only)"
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def synccommands(self, interaction: Interaction):
@@ -83,18 +102,17 @@ class Core(commands.Cog):
             "Syncing commands",
             f"Guild: {interaction.guild.name} • By: {interaction.user}",
             interaction.guild,
-            interaction.channel
+            interaction.channel,
         )
         synced = await self.bot.tree.sync(guild=interaction.guild)
         live_feed.log(
             "Commands synced",
             f"Guild: {interaction.guild.name} • Count: {len(synced)}",
             interaction.guild,
-            interaction.channel
+            interaction.channel,
         )
         await interaction.followup.send(
-            f"✅ Synced {len(synced)} commands to this server.",
-            ephemeral=True
+            f"✅ Synced {len(synced)} commands to this server.", ephemeral=True
         )
 
 
@@ -104,17 +122,14 @@ class General(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @app_commands.command(
-        name="help",
-        description="View all Kingshot Bot commands"
-    )
+    @app_commands.command(name="help", description="💠View all Kingshot Bot commands")
     async def help(self, interaction: Interaction):
         """Show help information."""
         live_feed.log(
             "Help command used",
             f"Guild: {interaction.guild.name} • By: {interaction.user}",
             interaction.guild,
-            interaction.channel
+            interaction.channel,
         )
         embed = Embed(
             title="🤴 Kingshot Bot • Help",
@@ -134,24 +149,28 @@ class General(commands.Cog):
                 "• `/addevent` — schedule a new event\n"
                 "• `/listevents` — list upcoming events\n"
                 "• `/cancelevent` — cancel an event\n\n"
+                "📣 **Notifications:**\n"
+                "• `/viewsettings` — show current ping settings\n"
+                "• `/setarenaping` — configure arena pings\n"
+                "• `/setbearpings` — configure bear pings\n"
+                "• `/seteventpings` — configure event pings\n\n"
                 "🪄 **Misc:**\n"
+                "• `/embed` — create an embed message with the bot\n"
                 "• `/synccommands` — force sync of slash commands\n"
                 "• `/purge` — quickly remove messages\n\n"
                 "📌 **[Join the support server](https://discord.gg/MPFdHdQXzf)**"
             ),
-            color=EMBED_COLOR_PRIMARY
+            color=EMBED_COLOR_PRIMARY,
         )
         embed.set_footer(
             text="Kingshot Bot • created by ninjardx 👑",
-            icon_url=self.bot.user.avatar.url
-                if self.bot.user.avatar
-                else discord.Embed.Empty
+            icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
     @app_commands.command(
         name="purge",
-        description="🧹 Delete a number of recent user messages in this channel"
+        description="🧹 Delete a number of recent user messages in this channel",
     )
     @app_commands.describe(amount="How many messages to consider (1–100)")
     @app_commands.checks.has_permissions(manage_messages=True)
@@ -164,7 +183,7 @@ class General(commands.Cog):
                 "Purge failed",
                 f"Guild: {interaction.guild.name} • Error: Invalid channel type",
                 interaction.guild,
-                interaction.channel
+                interaction.channel,
             )
             return await interaction.followup.send(
                 "❌ Could not determine the channel.", ephemeral=True
@@ -174,16 +193,13 @@ class General(commands.Cog):
             "Starting message purge",
             f"Guild: {interaction.guild.name} • Channel: #{ch.name} • Amount: {amount} • By: {interaction.user}",
             interaction.guild,
-            ch
+            ch,
         )
 
         # Clamp between 1 and 100
         limit = max(1, min(amount, 100))
         # Bulk-delete up to `limit` of the most recent non-bot messages
-        deleted = await ch.purge(
-            limit=limit,
-            check=lambda m: not m.author.bot
-        )
+        deleted = await ch.purge(limit=limit, check=lambda m: not m.author.bot)
         # Any bot messages within those `limit` were skipped
         kept = limit - len(deleted)
 
@@ -191,12 +207,12 @@ class General(commands.Cog):
             "Purge complete",
             f"Guild: {interaction.guild.name} • Channel: #{ch.name} • Deleted: {len(deleted)} • Kept: {kept}",
             interaction.guild,
-            ch
+            ch,
         )
 
         await interaction.followup.send(
             f"✅ Deleted {len(deleted)} message(s), kept {kept} bot message(s).",
-            ephemeral=True
+            ephemeral=True,
         )
 
 
@@ -206,24 +222,15 @@ class EmbedModal(ui.Modal, title="Create an Embed"):
     def __init__(self, bot: commands.Bot):
         super().__init__()
         self.bot = bot
-        self.title_input = ui.TextInput(
-            label="Title",
-            required=True,
-            max_length=256
-        )
+        self.title_input = ui.TextInput(label="Title", required=True, max_length=256)
         self.description_input = ui.TextInput(
-            label="Description",
-            style=discord.TextStyle.paragraph,
-            required=True
+            label="Description", style=discord.TextStyle.paragraph, required=True
         )
         self.footer_input = ui.TextInput(
-            label="Footer (optional)",
-            required=False,
-            max_length=256
+            label="Footer (optional)", required=False, max_length=256
         )
         self.thumbnail_input = ui.TextInput(
-            label="Thumbnail URL (optional)",
-            required=False
+            label="Thumbnail URL (optional)", required=False
         )
         self.add_item(self.title_input)
         self.add_item(self.description_input)
@@ -235,12 +242,12 @@ class EmbedModal(ui.Modal, title="Create an Embed"):
             "Embed created",
             f"Guild: {interaction.guild.name} • By: {interaction.user} • Title: {self.title_input.value[:30]}...",
             interaction.guild,
-            interaction.channel
+            interaction.channel,
         )
         embed = Embed(
             title=self.title_input.value,
             description=self.description_input.value,
-            color=EMBED_COLOR_PRIMARY
+            color=EMBED_COLOR_PRIMARY,
         )
         if self.footer_input.value:
             embed.set_footer(
@@ -249,7 +256,7 @@ class EmbedModal(ui.Modal, title="Create an Embed"):
                     self.bot.user.avatar.url
                     if self.bot.user.avatar
                     else discord.Embed.Empty
-                )
+                ),
             )
         if self.thumbnail_input.value:
             embed.set_thumbnail(url=self.thumbnail_input.value)
@@ -264,7 +271,7 @@ class Utility(commands.Cog):
 
     @app_commands.command(
         name="embed",
-        description="📄 Open a popup to create an embedded message (Admins only)"
+        description="📄 Open a popup to create an embedded message (Admins only)",
     )
     @app_commands.checks.has_permissions(administrator=True)
     async def embed(self, interaction: Interaction):
@@ -273,7 +280,7 @@ class Utility(commands.Cog):
             "Embed creation started",
             f"Guild: {interaction.guild.name} • By: {interaction.user}",
             interaction.guild,
-            interaction.channel
+            interaction.channel,
         )
         await interaction.response.send_modal(EmbedModal(self.bot))
 

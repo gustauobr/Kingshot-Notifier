@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import datetime, time, timedelta, timezone
+from typing import Optional
 
 import discord
 from discord.ext import commands
@@ -16,6 +17,7 @@ from config import (
     EMBED_COLOR_WARNING,
     SCHEDULER_INTERVAL_SEC
 )
+from config_helpers import get_arena_ping_settings
 
 def make_arena_embed(status: str, open_ts: int, reset_ts: int) -> discord.Embed:
     if status == "scheduled":
@@ -31,7 +33,7 @@ def make_arena_embed(status: str, open_ts: int, reset_ts: int) -> discord.Embed:
         color = EMBED_COLOR_WARNING
         desc = (
             f"🏁 **Resets In:** <t:{reset_ts}:R>\n"
-            f"⚙️ Don’t miss your chance to attack today!"
+            f"⚙️ Don't miss your chance to attack today!"
         )
 
     embed = discord.Embed(title=title, description=desc, color=color)
@@ -91,21 +93,32 @@ class ArenaScheduler(commands.Cog):
                 if not ch:
                     continue
 
-                # Send ping when arena opens
-                if phase == "open" and not arena_cfg.get("ping_id"):
-                    role_mention = "@here"
-                    role = None
-                    role_id = arena_cfg.get("role_id")
-                    if role_id:
-                        role = guild.get_role(int(role_id))
-                    if not role:
-                        role = discord.utils.get(guild.roles, name="Arena ⚔️")
-                    if role:
-                        role_mention = role.mention
+                # Get ping settings for this guild
+                ping_settings = get_arena_ping_settings(guild_id)
 
-                    ping_msg = await ch.send(f"{role_mention} ⚔️ Arena is now live!")
-                    arena_cfg["ping_id"] = ping_msg.id
-                    save_config(gcfg)
+                # Send ping when arena opens (if enabled)
+                if phase == "open" and not arena_cfg.get("ping_id"):
+                    if ping_settings.ping_enabled:
+                        role_mention = "@here"
+                        role = None
+                        role_id = arena_cfg.get("role_id")
+                        if role_id:
+                            role = guild.get_role(int(role_id))
+                        if not role:
+                            role = discord.utils.get(guild.roles, name="Arena ⚔️")
+                        if role:
+                            role_mention = role.mention
+
+                        ping_msg = await ch.send(f"{role_mention} ⚔️ Arena is now live!")
+                        arena_cfg["ping_id"] = ping_msg.id
+                        save_config(gcfg)
+                    else:
+                        live_feed.log(
+                            "Skipping arena ping (disabled in settings)",
+                            f"Guild: {guild.name}",
+                            guild,
+                            ch
+                        )
 
                 # Cleanup ping after reset
                 if phase == "scheduled" and arena_cfg.get("ping_id"):
@@ -186,6 +199,9 @@ class ArenaScheduler(commands.Cog):
         if not ch:
             return
 
+        # Get ping settings for this guild
+        ping_settings = get_arena_ping_settings(str(guild.id))
+
         now = datetime.now(timezone.utc)
         today = now.date()
         open_h, open_m = map(int, ARENA_OPEN_TIME.split(":"))
@@ -197,21 +213,29 @@ class ArenaScheduler(commands.Cog):
 
         msg = await self._get_or_fix_message(guild_cfg, ch, phase, arena_open, arena_reset)
 
-        # Handle ping on manual sync
+        # Handle ping on manual sync (if enabled)
         if phase == "open" and not arena_cfg.get("ping_id"):
-            role_mention = "@here"
-            role = None
-            role_id = arena_cfg.get("role_id")
-            if role_id:
-                role = guild.get_role(int(role_id))
-            if not role:
-                role = discord.utils.get(guild.roles, name="Arena ⚔️")
-            if role:
-                role_mention = role.mention
+            if ping_settings.ping_enabled:
+                role_mention = "@here"
+                role = None
+                role_id = arena_cfg.get("role_id")
+                if role_id:
+                    role = guild.get_role(int(role_id))
+                if not role:
+                    role = discord.utils.get(guild.roles, name="Arena ⚔️")
+                if role:
+                    role_mention = role.mention
 
-            ping_msg = await ch.send(f"{role_mention} ⚔️ Arena is now live!")
-            arena_cfg["ping_id"] = ping_msg.id
-            save_config(gcfg)
+                ping_msg = await ch.send(f"{role_mention} ⚔️ Arena is now live!")
+                arena_cfg["ping_id"] = ping_msg.id
+                save_config(gcfg)
+            else:
+                live_feed.log(
+                    "Skipping arena ping (disabled in settings)",
+                    f"Guild: {guild.name}",
+                    guild,
+                    ch
+                )
 
         if msg and msg.id != arena_cfg.get("message_id"):
             arena_cfg["message_id"] = msg.id
