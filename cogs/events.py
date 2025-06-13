@@ -35,6 +35,12 @@ EVENT_TEMPLATES = {
         "thumbnail": "https://example.com/viking.png",
         "duration_minutes": 30  # 30 minutes
     },
+    "ceasares_fury": {
+        "title": "Ceasares Fury",
+        "description": "Rally against the Ceasares!",
+        "thumbnail": "https://example.com/ceasares.png",
+        "duration_minutes": 10  # 10 minutes
+    },
     "swordland_showdown": {
         "title": "Swordland Showdown",
         "description": "Enter the Swordland Showdown!",
@@ -53,7 +59,7 @@ EVENT_TEMPLATES = {
         "thumbnail": "https://example.com/sanctuary.png",
         "duration_minutes": 2 * 60  # 2 hours
     },
-    "Castle_Battle": {
+    "castle_battle": {
         "title": "Castle Battle",
         "description": "Participate in the Castle Battle!",
         "thumbnail": "https://example.com/castle.png",
@@ -63,12 +69,13 @@ EVENT_TEMPLATES = {
 
 EVENT_EMOJIS = {
     "hall_of_governors": "<:stateagekingshot300x291:1375519500820025454>",
-    "all_out_event": "🏆",
+    "all_out_event": "<:allouteventicon293x300:1375519529479704677>",
+    "ceasares_fury": "<:cesaresfuryeventicon256x300:1375519541349843138>",
     "viking_vengeance": "⚔️",
     "swordland_showdown": "🗡️",
     "kingdom_v_kingdom": "👑",
     "sanctuary_battles": "🛡️",
-    "Castle_Battle": "🏰"
+    "castle_battle": "🏰"
 }
 
 def make_event_welcome_embed() -> discord.Embed:

@@ -64,7 +64,12 @@ async def ensure_category(guild: discord.Guild) -> discord.CategoryChannel:
         return None
     cat = discord.utils.get(guild.categories, name=CATEGORY_NAME)
     if not cat:
-        cat = await guild.create_category(name=CATEGORY_NAME)
+        try:
+            cat = await guild.create_category(name=CATEGORY_NAME)
+        except discord.Forbidden:
+            # Bot doesn't have permission to create categories
+            # Return None and let the calling function handle it
+            return None
     return cat
 
 
@@ -87,6 +92,9 @@ async def ensure_channel(
     # Get or create category if not provided
     if category is None:
         category = await ensure_category(guild)
+        # If we can't create the category due to permissions, skip channel creation
+        if category is None:
+            return None
 
     if locked:
         overwrites = {
@@ -101,10 +109,14 @@ async def ensure_channel(
             ),
         }
 
-    ch = await guild.create_text_channel(
-        name, category=category, overwrites=overwrites or {}
-    )
-    return ch
+    try:
+        ch = await guild.create_text_channel(
+            name, category=category, overwrites=overwrites or {}
+        )
+        return ch
+    except discord.Forbidden:
+        # Bot doesn't have permission to create channels
+        return None
 
 
 async def ensure_role(

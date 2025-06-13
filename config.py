@@ -55,6 +55,7 @@ EMOJI_THUMBNAILS_EVENTS = {
     "kingdom_v_kingdom": "https://cdn.discordapp.com/emojis/1375519564862853171.png",
     "sanctuary_battles": "https://cdn.discordapp.com/emojis/1381360264095596635.png",
     "Castle_Battle": "https://cdn.discordapp.com/emojis/1381350545159225365.png",
+    "ceasares_fury": "https://cdn.discordapp.com/emojis/1375519541349843138.png",
 }
 
 # ─── Date/Time Formats ──────────────────────────────────────
@@ -72,7 +73,7 @@ BEAR_CHANNEL = "🐻｜bear"
 BEAR_LOG_CHANNEL = "🐾｜bear-log"
 ARENA_CHANNEL = "⚔｜arena"
 EVENT_CHANNEL = "🏆｜events"
-ROLE_EMOJIS = {"🐻": "Bear 🐻", "⚔️": "Arena ⚔️", "🏆": "Events 🏆"}
+ROLE_EMOJIS = {"🐻": "Bear 🐻", "⚔️": "Arena ⚔️", "🏆": "Event 🏆"}
 
 # ─── Guild Tracking ─────────────────────────────────────────
 MASTER_GUILD_ID = 1376296437448708206

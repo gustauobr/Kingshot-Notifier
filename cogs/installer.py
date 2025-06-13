@@ -41,90 +41,12 @@ def locked_channel_perms(bot_member: discord.Member, restrict_reactions=False):
     }
     return overwrites
 
-class ChannelSelect(discord.ui.Select):
-    def __init__(self, key: str, label: str, channels: list[discord.TextChannel], parent: "ManualChannelSelector", row: int = 0):
-        self.key = key
-        self.parent = parent
-        options = [discord.SelectOption(label=ch.name, value=str(ch.id)) for ch in channels]
-        super().__init__(
-            placeholder=f"Select {label}",
-            min_values=1,
-            max_values=1,
-            options=options,
-            custom_id=key,
-            row=row
-        )
-
-    async def callback(self, interaction: discord.Interaction):
-        self.parent.channel_ids[self.key] = int(self.values[0])
-        await interaction.response.defer()
-        # Auto-save if all channels are selected
-        if all(v is not None for v in self.parent.channel_ids.values()):
-            guild_id = str(interaction.guild.id)
-            guild_cfg = gcfg.setdefault(guild_id, {})
-            
-            # Move selected channels to the category
-            category = await ensure_category(interaction.guild)
-            if category:
-                for key, channel_id in self.parent.channel_ids.items():
-                    if channel := interaction.guild.get_channel(channel_id):
-                        try:
-                            await channel.edit(category=category)
-                        except discord.Forbidden:
-                            live_feed.log(
-                                "Failed to move channel to category",
-                                f"Guild: {interaction.guild.name} • Channel: {channel.name} • Error: No permission",
-                                interaction.guild,
-                                interaction.channel
-                            )
-            
-            guild_cfg.setdefault("bear", {})["channel_id"]     = self.parent.channel_ids["bear"]
-            guild_cfg.setdefault("bear", {})["log_channel_id"] = self.parent.channel_ids["bear_log"]
-            guild_cfg.setdefault("arena", {})["channel_id"]    = self.parent.channel_ids["arena"]
-            guild_cfg.setdefault("event", {})["channel_id"]    = self.parent.channel_ids["event"]
-            guild_cfg.setdefault("reaction", {})["channel_id"] = self.parent.channel_ids["reaction"]
-            save_config(gcfg)
-            
-            # Send welcome embeds to channels
-            bear_ch = interaction.guild.get_channel(self.parent.channel_ids["bear"])
-            arena_ch = interaction.guild.get_channel(self.parent.channel_ids["arena"])
-            event_ch = interaction.guild.get_channel(self.parent.channel_ids["event"])
-            
-            if bear_ch:
-                bm = await bear_ch.send(embed=make_bear_welcome_embed(guild_id))
-                guild_cfg["bear"]["welcome_message_id"] = bm.id
-            
-            if arena_ch:
-                am = await arena_ch.send(embed=make_arena_welcome_embed(guild_id))
-                guild_cfg["arena"]["welcome_message_id"] = am.id
-            
-            if event_ch:
-                em = await event_ch.send(embed=make_event_welcome_embed(guild_id))
-                guild_cfg["event"]["welcome_message_id"] = em.id
-            
-            # Create roles and save their IDs
-            bear_role = await ensure_role(interaction.guild, "Bear 🐻", discord.Color.orange())
-            arena_role = await ensure_role(interaction.guild, "Arena ⚔️", discord.Color.red())
-            event_role = await ensure_role(interaction.guild, "Event 🏆", discord.Color.gold())
-            guild_cfg["bear"]["role_id"] = bear_role.id
-            guild_cfg["arena"]["role_id"] = arena_role.id
-            guild_cfg["event"]["role_id"] = event_role.id
-            save_config(gcfg)
-            
-            # Trigger immediate setup
-            if (c := self.parent.bot.get_cog("ReactionRole")):
-                await c.setup_reactions(interaction.guild, interaction.guild.get_channel(guild_cfg["reaction"]["channel_id"]))
-            if (a := self.parent.bot.get_cog("ArenaScheduler")):
-                await a.sync_now(interaction.guild)
-            await interaction.followup.send("✅ Manual install complete.", ephemeral=True)
-            self.parent.stop()
-
-class ManualChannelSelector(discord.ui.View):
+class SimpleChannelSelector:
     def __init__(self, bot: commands.Bot, interaction: discord.Interaction, cfg: dict):
-        super().__init__(timeout=300)
         self.bot = bot
         self.interaction = interaction
         self.cfg = cfg
+        self.all_channels = interaction.guild.text_channels
         self.channel_ids = {
             "bear": None,
             "bear_log": None,
@@ -132,22 +54,260 @@ class ManualChannelSelector(discord.ui.View):
             "event": None,
             "reaction": None
         }
-        labels = {
+        
+        self.labels = {
             "bear": "🐻 Bear Channel",
-            "bear_log": "🐾 Bear Log Channel",
+            "bear_log": "🐾 Bear Log Channel", 
             "arena": "⚔️ Arena Channel",
             "event": "🏆 Event Channel",
             "reaction": "📜 Reaction Role Channel"
         }
-        for idx, (key, label) in enumerate(labels.items()):
-            row = idx if idx < 5 else 4
-            self.add_item(ChannelSelect(key, label, interaction.guild.text_channels, self, row=row))
+        
+        self.current_step = 0
+        self.steps = list(self.labels.keys())
 
-    async def on_timeout(self):
-        try:
-            await self.interaction.followup.send("❌ Manual install timed out.", ephemeral=True)
-        except:
-            pass
+    async def start_selection(self):
+        """Start the channel selection process"""
+        await self.show_current_step()
+
+    async def show_current_step(self):
+        """Show the current step's channel selection"""
+        if self.current_step >= len(self.steps):
+            await self.complete_installation()
+            return
+
+        key = self.steps[self.current_step]
+        label = self.labels[key]
+        
+        # Get accessible channels
+        bot_member = self.interaction.guild.get_member(self.bot.user.id)
+        accessible_channels = [
+            ch for ch in self.all_channels 
+            if bot_member and ch.permissions_for(bot_member).send_messages
+        ]
+        
+        # Limit to 25 channels for Discord's select menu limit
+        limited_channels = accessible_channels[:25]
+        
+        # Create options
+        options = [discord.SelectOption(label=ch.name, value=str(ch.id)) for ch in limited_channels]
+        
+        # Add search option if there are more channels
+        if len(accessible_channels) > 25:
+            options.append(discord.SelectOption(
+                label=f"🔍 Search more channels ({len(accessible_channels)} total)",
+                value="search"
+            ))
+
+        # Create select menu
+        select = discord.ui.Select(
+            placeholder=f"Select {label}",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id=f"select_{key}"
+        )
+        
+        # Create view
+        view = discord.ui.View(timeout=300)
+        view.add_item(select)
+        
+        # Add cancel button
+        cancel_button = discord.ui.Button(
+            label="❌ Cancel",
+            style=discord.ButtonStyle.danger,
+            custom_id="cancel"
+        )
+        view.add_item(cancel_button)
+        
+        # Set up callback
+        async def select_callback(interaction: discord.Interaction):
+            if interaction.data["custom_id"] == "cancel":
+                await interaction.response.send_message("❌ Installation cancelled.", ephemeral=True)
+                return
+            
+            if interaction.data["custom_id"] == f"select_{key}":
+                value = interaction.data["values"][0]
+                
+                if value == "search":
+                    # Show search modal
+                    await interaction.response.send_modal(SimpleSearchModal(self, key, label))
+                else:
+                    # Store selection and move to next step
+                    self.channel_ids[key] = int(value)
+                    self.current_step += 1
+                    
+                    await interaction.response.send_message(
+                        f"✅ Selected {label}: <#{value}>\n\nContinuing to next channel...",
+                        ephemeral=True
+                    )
+                    
+                    # Show next step
+                    await self.show_current_step()
+        
+        # Set the callback
+        select.callback = select_callback
+        cancel_button.callback = lambda i: select_callback(i) if i.data["custom_id"] == "cancel" else None
+        
+        # Send the message
+        if self.current_step == 0:
+            await self.interaction.followup.send(
+                f"⚙️ **Manual Installation - Step {self.current_step + 1}/{len(self.steps)}**\n"
+                f"Please select the {label}:",
+                view=view,
+                ephemeral=True
+            )
+        else:
+            # For subsequent steps, we need to send a new message
+            await self.interaction.followup.send(
+                f"⚙️ **Step {self.current_step + 1}/{len(self.steps)}**\n"
+                f"Please select the {label}:",
+                view=view,
+                ephemeral=True
+            )
+
+    async def complete_installation(self):
+        """Complete the installation process"""
+        guild_id = str(self.interaction.guild.id)
+        guild_cfg = gcfg.setdefault(guild_id, {})
+        
+        # Move selected channels to the category
+        category = await ensure_category(self.interaction.guild)
+        if category:
+            for key, channel_id in self.channel_ids.items():
+                if channel := self.interaction.guild.get_channel(channel_id):
+                    try:
+                        await channel.edit(category=category)
+                    except discord.Forbidden:
+                        live_feed.log(
+                            "Failed to move channel to category",
+                            f"Guild: {self.interaction.guild.name} • Channel: {channel.name} • Error: No permission",
+                            self.interaction.guild,
+                            self.interaction.channel
+                        )
+        
+        # Save channel IDs
+        guild_cfg.setdefault("bear", {})["channel_id"]     = self.channel_ids["bear"]
+        guild_cfg.setdefault("bear", {})["log_channel_id"] = self.channel_ids["bear_log"]
+        guild_cfg.setdefault("arena", {})["channel_id"]    = self.channel_ids["arena"]
+        guild_cfg.setdefault("event", {})["channel_id"]    = self.channel_ids["event"]
+        guild_cfg.setdefault("reaction", {})["channel_id"] = self.channel_ids["reaction"]
+        save_config(gcfg)
+        
+        # Send welcome embeds to channels
+        bear_ch = self.interaction.guild.get_channel(self.channel_ids["bear"])
+        arena_ch = self.interaction.guild.get_channel(self.channel_ids["arena"])
+        event_ch = self.interaction.guild.get_channel(self.channel_ids["event"])
+        
+        if bear_ch:
+            bm = await bear_ch.send(embed=make_bear_welcome_embed(guild_id))
+            guild_cfg["bear"]["welcome_message_id"] = bm.id
+        
+        if arena_ch:
+            am = await arena_ch.send(embed=make_arena_welcome_embed(guild_id))
+            guild_cfg["arena"]["welcome_message_id"] = am.id
+        
+        if event_ch:
+            em = await event_ch.send(embed=make_event_welcome_embed(guild_id))
+            guild_cfg["event"]["welcome_message_id"] = em.id
+        
+        # Create roles and save their IDs
+        bear_role = await ensure_role(self.interaction.guild, "Bear 🐻", discord.Color.orange())
+        arena_role = await ensure_role(self.interaction.guild, "Arena ⚔️", discord.Color.red())
+        event_role = await ensure_role(self.interaction.guild, "Event 🏆", discord.Color.gold())
+        guild_cfg["bear"]["role_id"] = bear_role.id
+        guild_cfg["arena"]["role_id"] = arena_role.id
+        guild_cfg["event"]["role_id"] = event_role.id
+        save_config(gcfg)
+        
+        # Trigger immediate setup
+        if (c := self.bot.get_cog("ReactionRole")):
+            await c.setup_reactions(self.interaction.guild, self.interaction.guild.get_channel(guild_cfg["reaction"]["channel_id"]))
+        if (a := self.bot.get_cog("ArenaScheduler")):
+            await a.sync_now(self.interaction.guild)
+        
+        await self.interaction.followup.send("✅ Manual install complete!", ephemeral=True)
+
+
+class SimpleSearchModal(discord.ui.Modal, title="🔍 Search Channels"):
+    def __init__(self, parent: SimpleChannelSelector, key: str, label: str):
+        super().__init__()
+        self.parent = parent
+        self.key = key
+        self.label = label
+        
+        self.search_term = discord.ui.TextInput(
+            label="Channel name (partial match)",
+            placeholder="e.g., 'general' or 'bot'",
+            min_length=1,
+            max_length=32,
+            required=True
+        )
+        self.add_item(self.search_term)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        await interaction.response.defer()
+        
+        # Get the bot's member object in this guild
+        bot_member = interaction.guild.get_member(self.parent.bot.user.id)
+        
+        # Filter channels by search term
+        search_term = self.search_term.value.lower()
+        matching_channels = [
+            ch for ch in self.parent.all_channels 
+            if bot_member and ch.permissions_for(bot_member).send_messages 
+            and search_term in ch.name.lower()
+        ]
+        
+        if not matching_channels:
+            await interaction.followup.send(
+                f"❌ No accessible channels found matching '{search_term}'", 
+                ephemeral=True
+            )
+            return
+        
+        # Create options for search results (max 25)
+        limited_channels = matching_channels[:25]
+        options = [discord.SelectOption(label=ch.name, value=str(ch.id)) for ch in limited_channels]
+        
+        # Create select menu
+        select = discord.ui.Select(
+            placeholder=f"Select {self.label} from search results",
+            min_values=1,
+            max_values=1,
+            options=options,
+            custom_id=f"search_{self.key}"
+        )
+        
+        # Create view
+        view = discord.ui.View(timeout=300)
+        view.add_item(select)
+        
+        # Set up callback
+        async def search_callback(interaction: discord.Interaction):
+            if interaction.data["custom_id"] == f"search_{self.key}":
+                value = interaction.data["values"][0]
+                
+                # Store selection and move to next step
+                self.parent.channel_ids[self.key] = int(value)
+                self.parent.current_step += 1
+                
+                await interaction.response.send_message(
+                    f"✅ Selected {self.label}: <#{value}>\n\nContinuing to next channel...",
+                    ephemeral=True
+                )
+                
+                # Show next step
+                await self.parent.show_current_step()
+        
+        # Set the callback
+        select.callback = search_callback
+        
+        await interaction.followup.send(
+            f"🔍 Found {len(matching_channels)} channels matching '{search_term}':",
+            view=view,
+            ephemeral=True
+        )
 
 async def ensure_category(guild: discord.Guild) -> discord.CategoryChannel:
     """Ensure a category exists, create if it doesn't"""
@@ -285,186 +445,218 @@ class Installer(commands.Cog):
                 guild,
                 interaction.channel
             )
-            view = ManualChannelSelector(self.bot, interaction, gcfg)
-            await interaction.followup.send(
-                "⚙️ Please select channels and press Save 💾 below:", 
-                view=view, ephemeral=True
-            )
+            selector = SimpleChannelSelector(self.bot, interaction, gcfg)
+            await selector.start_selection()
 
     @app_commands.command(name="uninstall", description="🗑️ Remove all bot channels, roles, and settings")
     async def uninstall(self, interaction: discord.Interaction):
-        guild = interaction.guild
-        if not guild or not interaction.user.guild_permissions.administrator:
-            return await interaction.response.send_message("❌ Admins only.", ephemeral=True)
-        await interaction.response.defer(ephemeral=True)
+        try:
+            guild = interaction.guild
+            if not guild or not interaction.user.guild_permissions.administrator:
+                return await interaction.response.send_message("❌ Admins only.", ephemeral=True)
+            await interaction.response.defer(ephemeral=True)
 
-        live_feed.log(
-            "Starting uninstall",
-            f"Guild: {guild.name} • By: {interaction.user}",
-            guild,
-            interaction.channel
-        )
+            live_feed.log(
+                "Starting uninstall",
+                f"Guild: {guild.name} • By: {interaction.user}",
+                guild,
+                interaction.channel
+            )
 
-        guild_id = str(guild.id)
-        cfg = gcfg.get(guild_id, {})
-        deleted_roles, deleted_channels, deleted_categories, purged = 0, 0, 0, 0
+            guild_id = str(guild.id)
+            cfg = gcfg.get(guild_id, {})
+            deleted_roles, deleted_channels, deleted_categories, purged = 0, 0, 0, 0
 
-        # Delete roles (bear, arena, event)
-        for role_key in ("bear", "arena", "event"):
-            role_id = cfg.get(role_key, {}).get("role_id")
-            if role_id and (role := guild.get_role(role_id)):
-                try:
-                    await role.delete(reason="Uninstall")
-                    deleted_roles += 1
-                    live_feed.log(
-                        f"Deleted {role_key} role",
-                        f"Guild: {guild.name} • Role: {role.name}",
-                        guild,
-                        interaction.channel
-                    )
-                except discord.Forbidden:
-                    live_feed.log(
-                        f"Failed to delete {role_key} role",
-                        f"Guild: {guild.name} • Role: {role.name} • Error: No permission",
-                        guild,
-                        interaction.channel
-                    )
-
-        # Auto mode: delete channels & category
-        if cfg.get("mode") == "auto":
-            # First try to delete channels by their stored IDs
-            channels_to_delete = []
-            
-            # Handle bear and bear log channels
-            if bear_cfg := cfg.get("bear", {}):
-                if channel_id := bear_cfg.get("channel_id"):
-                    if channel := guild.get_channel(channel_id):
-                        channels_to_delete.append(channel)
-                if log_channel_id := bear_cfg.get("log_channel_id"):
-                    if channel := guild.get_channel(log_channel_id):
-                        channels_to_delete.append(channel)
-            
-            # Handle other channels
-            for sect in ("arena", "event", "reaction"):
-                if channel_id := cfg.get(sect, {}).get("channel_id"):
-                    if channel := guild.get_channel(channel_id):
-                        channels_to_delete.append(channel)
-
-            # Delete each channel
-            for channel in channels_to_delete:
-                try:
-                    await channel.delete(reason="Uninstall")
-                    deleted_channels += 1
-                    live_feed.log(
-                        "Deleted channel",
-                        f"Guild: {guild.name} • Channel: {channel.name}",
-                        guild,
-                        interaction.channel
-                    )
-                except discord.Forbidden:
-                    live_feed.log(
-                        "Failed to delete channel",
-                        f"Guild: {guild.name} • Channel: {channel.name} • Error: No permission",
-                        guild,
-                        interaction.channel
-                    )
-                except discord.NotFound:
-                    live_feed.log(
-                        "Channel already deleted",
-                        f"Guild: {guild.name} • Channel ID: {channel.id}",
-                        guild,
-                        interaction.channel
-                    )
-
-            # Try to delete the category regardless of whether it's empty
-            category = discord.utils.get(guild.categories, name=CATEGORY_NAME)
-            if category:
-                try:
-                    # First try to move any remaining channels out of the category
-                    for channel in category.channels:
-                        try:
-                            await channel.edit(category=None)
-                        except (discord.Forbidden, discord.NotFound):
-                            pass
-                    
-                    # Then delete the category
-                    await category.delete(reason="Uninstall")
-                    deleted_categories += 1
-                    live_feed.log(
-                        "Deleted category",
-                        f"Guild: {guild.name} • Category: {category.name}",
-                        guild,
-                        interaction.channel
-                    )
-                except discord.Forbidden:
-                    live_feed.log(
-                        "Failed to delete category",
-                        f"Guild: {guild.name} • Category: {category.name} • Error: No permission",
-                        guild,
-                        interaction.channel
-                    )
-                except discord.NotFound:
-                    live_feed.log(
-                        "Category already deleted",
-                        f"Guild: {guild.name} • Category: {category.name}",
-                        guild,
-                        interaction.channel
-                    )
-        else:
-            # Manual mode: purge bot messages only
-            for sect in ("bear", "bear_log", "arena", "event", "reaction"):
-                channel_id = cfg.get(sect, {}).get("channel_id")
-                if channel_id and (channel := guild.get_channel(channel_id)):
-                    def is_bot(m): return m.author.id == self.bot.user.id
+            # Delete roles (bear, arena, event)
+            for role_key in ("bear", "arena", "event"):
+                role_id = cfg.get(role_key, {}).get("role_id")
+                if role_id and (role := guild.get_role(role_id)):
                     try:
-                        purged += len(await channel.purge(limit=100, check=is_bot))
-                        if purged > 0:
-                            live_feed.log(
-                                "Purged bot messages",
-                                f"Guild: {guild.name} • Channel: {channel.name} • Count: {purged}",
-                                guild,
-                                interaction.channel
-                            )
+                        await role.delete(reason="Uninstall")
+                        deleted_roles += 1
+                        live_feed.log(
+                            f"Deleted {role_key} role",
+                            f"Guild: {guild.name} • Role: {role.name}",
+                            guild,
+                            interaction.channel
+                        )
                     except discord.Forbidden:
                         live_feed.log(
-                            "Failed to purge messages",
-                            f"Guild: {guild.name} • Channel: {channel.name} • Error: No permission",
+                            f"Failed to delete {role_key} role",
+                            f"Guild: {guild.name} • Role: {role.name} • Error: No permission",
                             guild,
                             interaction.channel
                         )
 
-        # Cancel any running BearScheduler tasks for this guild
-        bear_cog = self.bot.get_cog("BearScheduler")
-        if bear_cog:
-            for ev in list(bear_cog.bear_events.values()):
-                if ev.guild_id == guild.id and ev.task:
-                    ev.task.cancel()
+            # Auto mode: delete channels & category
+            if cfg.get("mode") == "auto":
+                # First try to delete channels by their stored IDs
+                channels_to_delete = []
+                
+                # Handle bear and bear log channels
+                if bear_cfg := cfg.get("bear", {}):
+                    if channel_id := bear_cfg.get("channel_id"):
+                        if channel := guild.get_channel(channel_id):
+                            channels_to_delete.append(channel)
+                    if log_channel_id := bear_cfg.get("log_channel_id"):
+                        if channel := guild.get_channel(log_channel_id):
+                            channels_to_delete.append(channel)
+                
+                # Handle other channels
+                for sect in ("arena", "event", "reaction"):
+                    if channel_id := cfg.get(sect, {}).get("channel_id"):
+                        if channel := guild.get_channel(channel_id):
+                            channels_to_delete.append(channel)
+
+                # Delete each channel
+                for channel in channels_to_delete:
                     try:
-                        await ev.task
-                    except asyncio.CancelledError:
-                        pass
-                    live_feed.log(
-                        "Cancelled bear task",
-                        f"Guild: {guild.name} • Bear ID: {ev.id}",
-                        guild,
-                        interaction.channel
+                        await channel.delete(reason="Uninstall")
+                        deleted_channels += 1
+                        live_feed.log(
+                            "Deleted channel",
+                            f"Guild: {guild.name} • Channel: {channel.name}",
+                            guild,
+                            interaction.channel
+                        )
+                    except discord.Forbidden:
+                        live_feed.log(
+                            "Failed to delete channel",
+                            f"Guild: {guild.name} • Channel: {channel.name} • Error: No permission",
+                            guild,
+                            interaction.channel
+                        )
+                    except discord.NotFound:
+                        live_feed.log(
+                            "Channel already deleted",
+                            f"Guild: {guild.name} • Channel ID: {channel.id}",
+                            guild,
+                            interaction.channel
+                        )
+
+                # Try to delete the category regardless of whether it's empty
+                category = discord.utils.get(guild.categories, name=CATEGORY_NAME)
+                if category:
+                    try:
+                        # First try to move any remaining channels out of the category
+                        for channel in category.channels:
+                            try:
+                                await channel.edit(category=None)
+                            except (discord.Forbidden, discord.NotFound):
+                                pass
+                        
+                        # Then delete the category
+                        await category.delete(reason="Uninstall")
+                        deleted_categories += 1
+                        live_feed.log(
+                            "Deleted category",
+                            f"Guild: {guild.name} • Category: {category.name}",
+                            guild,
+                            interaction.channel
+                        )
+                    except discord.Forbidden:
+                        live_feed.log(
+                            "Failed to delete category",
+                            f"Guild: {guild.name} • Category: {category.name} • Error: No permission",
+                            guild,
+                            interaction.channel
+                        )
+                    except discord.NotFound:
+                        live_feed.log(
+                            "Category already deleted",
+                            f"Guild: {guild.name} • Category: {category.name}",
+                            guild,
+                            interaction.channel
+                        )
+            else:
+                # Manual mode: only purge bot messages, DO NOT delete channels
+                live_feed.log(
+                    "Manual mode uninstall - preserving channels",
+                    f"Guild: {guild.name} • Mode: manual",
+                    guild,
+                    interaction.channel
+                )
+                
+                # Only purge bot messages from the selected channels
+                for sect in ("bear", "bear_log", "arena", "event", "reaction"):
+                    channel_id = cfg.get(sect, {}).get("channel_id")
+                    if channel_id and (channel := guild.get_channel(channel_id)):
+                        def is_bot(m): return m.author.id == self.bot.user.id
+                        try:
+                            purged_count = len(await channel.purge(limit=100, check=is_bot))
+                            purged += purged_count
+                            if purged_count > 0:
+                                live_feed.log(
+                                    "Purged bot messages",
+                                    f"Guild: {guild.name} • Channel: {channel.name} • Count: {purged_count}",
+                                    guild,
+                                    interaction.channel
+                                )
+                        except discord.Forbidden:
+                            live_feed.log(
+                                "Failed to purge messages",
+                                f"Guild: {guild.name} • Channel: {channel.name} • Error: No permission",
+                                guild,
+                                interaction.channel
+                            )
+
+            # Cancel any running BearScheduler tasks for this guild
+            bear_cog = self.bot.get_cog("BearScheduler")
+            if bear_cog:
+                for ev in list(bear_cog.bear_events.values()):
+                    if ev.guild_id == guild.id and ev.task:
+                        ev.task.cancel()
+                        try:
+                            await ev.task
+                        except asyncio.CancelledError:
+                            pass
+                        live_feed.log(
+                            "Cancelled bear task",
+                            f"Guild: {guild.name} • Bear ID: {ev.id}",
+                            guild,
+                            interaction.channel
+                        )
+
+            # Now remove the config entry
+            gcfg.pop(guild_id, None)
+            save_config(gcfg)
+
+            live_feed.log(
+                "Uninstall complete",
+                f"Guild: {guild.name} • Stats: {deleted_roles} roles, {deleted_channels} channels, {deleted_categories} categories, {purged} messages",
+                guild,
+                interaction.channel
+            )
+
+            # Create appropriate message based on mode
+            if cfg.get("mode") == "auto":
+                message = f"🧹 **Auto Mode Uninstall Complete:**\n• {deleted_roles} roles deleted\n• {deleted_channels} channels deleted\n• {deleted_categories} categories deleted\n• {purged} messages purged"
+            else:
+                message = f"🧹 **Manual Mode Uninstall Complete:**\n• {deleted_roles} roles deleted\n• Channels preserved (existing channels kept)\n• {purged} bot messages purged\n• Bot configuration removed"
+
+            await interaction.followup.send(message, ephemeral=True)
+        except Exception as e:
+            # Handle any unexpected errors gracefully
+            live_feed.log(
+                "Uninstall error",
+                f"Guild: {interaction.guild.name if interaction.guild else 'Unknown'} • Error: {str(e)}",
+                interaction.guild,
+                interaction.channel if interaction.channel else None
+            )
+            try:
+                await interaction.followup.send(
+                    f"❌ An error occurred during uninstall: {str(e)}", 
+                    ephemeral=True
+                )
+            except:
+                # If we can't send a followup, try a regular response
+                try:
+                    await interaction.response.send_message(
+                        f"❌ An error occurred during uninstall: {str(e)}", 
+                        ephemeral=True
                     )
-
-        # Now remove the config entry
-        gcfg.pop(guild_id, None)
-        save_config(gcfg)
-
-        live_feed.log(
-            "Uninstall complete",
-            f"Guild: {guild.name} • Stats: {deleted_roles} roles, {deleted_channels} channels, {deleted_categories} categories, {purged} messages",
-            guild,
-            interaction.channel
-        )
-
-        await interaction.followup.send(
-            f"🧹 Uninstalled: {deleted_roles} roles deleted, {deleted_channels} channels deleted, {deleted_categories} categories deleted, {purged} messages purged.", 
-            ephemeral=True
-        )
+                except:
+                    pass  # If all else fails, just log the error
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Installer(bot))

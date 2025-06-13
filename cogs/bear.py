@@ -139,21 +139,52 @@ class NewBearScheduler(commands.Cog):
         asyncio.create_task(self._startup_sync())
 
     async def _startup_sync(self):
+        """Sync all guilds on startup and start any active bears."""
         await self.bot.wait_until_ready()
         now = int(time.time())
-
+        
         for guild in self.bot.guilds:
-            # Skip if guild is not installed
-            if not is_installed(guild.id):
-                continue
+            # Check if this guild is installed and get the mode
+            guild_cfg = gcfg.get(str(guild.id), {})
+            if not guild_cfg.get("mode"):
+                continue  # Not installed
+            
+            # Get channel IDs from config
+            bear_channel_id = guild_cfg.get("bear", {}).get("channel_id")
+            bear_log_channel_id = guild_cfg.get("bear", {}).get("log_channel_id")
+            
+            # In manual mode, use existing channels; in auto mode, ensure channels exist
+            if guild_cfg.get("mode") == "manual":
+                # Manual mode: use existing channels, don't create new ones
+                ch = guild.get_channel(bear_channel_id) if bear_channel_id else None
+                log_ch = guild.get_channel(bear_log_channel_id) if bear_log_channel_id else None
+                
+                if not ch or not log_ch:
+                    live_feed.log(
+                        "Manual mode: missing bear channels",
+                        f"Guild: {guild.name} • Bear channel: {bear_channel_id} • Log channel: {bear_log_channel_id}",
+                        guild,
+                        None
+                    )
+                    continue
+            else:
+                # Auto mode: ensure channels exist
+                ch = await ensure_channel(guild, BEAR_CHANNEL)
+                log_ch = await ensure_channel(guild, BEAR_LOG_CHANNEL)
+                
+                if not ch or not log_ch:
+                    live_feed.log(
+                        "Auto mode: failed to ensure bear channels",
+                        f"Guild: {guild.name}",
+                        guild,
+                        None
+                    )
+                    continue
 
             cfg = gcfg.setdefault(str(guild.id), {})
             bears = cfg.setdefault("bears", [])
 
             # Handle cleanup of past bears that ended while bot was offline
-            ch = await ensure_channel(guild, BEAR_CHANNEL)
-            log_ch = await ensure_channel(guild, BEAR_LOG_CHANNEL)
-
             for bear in bears[:]:  # Create a copy to safely modify during iteration
                 # Check if bear is past victory phase
                 if now > bear["epoch"] + BEAR_PHASE_OFFSETS["victory"] * 60:
@@ -214,7 +245,28 @@ class NewBearScheduler(commands.Cog):
         guild = self.bot.get_guild(ev.guild_id)
         if not guild:
             return
-        ch = await ensure_channel(guild, BEAR_CHANNEL)
+            
+        # Get guild config and mode
+        guild_cfg = gcfg.get(str(ev.guild_id), {})
+        mode = guild_cfg.get("mode", "auto")
+        
+        # Get channels based on mode
+        if mode == "manual":
+            # Manual mode: use existing channels
+            bear_channel_id = guild_cfg.get("bear", {}).get("channel_id")
+            ch = guild.get_channel(bear_channel_id) if bear_channel_id else None
+        else:
+            # Auto mode: ensure channels exist
+            ch = await ensure_channel(guild, BEAR_CHANNEL)
+            
+        if not ch:
+            live_feed.log(
+                f"Failed to get bear channel (mode: {mode})",
+                f"Guild: {guild.name} • Bear ID: {ev.id}",
+                guild,
+                None
+            )
+            return
 
         # Get ping settings for this guild
         ping_settings = get_bear_ping_settings(str(ev.guild_id))
@@ -227,8 +279,14 @@ class NewBearScheduler(commands.Cog):
         # If we're past victory, clean up and exit
         if current_phase == "victory":
             # Post to log channel
-            log_ch = await ensure_channel(guild, BEAR_LOG_CHANNEL)
-            await log_ch.send(embed=make_phase_embed("victory", ev.epoch))
+            if mode == "manual":
+                bear_log_channel_id = guild_cfg.get("bear", {}).get("log_channel_id")
+                log_ch = guild.get_channel(bear_log_channel_id) if bear_log_channel_id else None
+            else:
+                log_ch = await ensure_channel(guild, BEAR_LOG_CHANNEL)
+                
+            if log_ch:
+                await log_ch.send(embed=make_phase_embed("victory", ev.epoch))
             # Clean up
             if ev.message_id:
                 try:
@@ -319,8 +377,14 @@ class NewBearScheduler(commands.Cog):
 
                 # If we've reached victory, handle cleanup
                 if new_phase == "victory":
-                    log_ch = await ensure_channel(guild, BEAR_LOG_CHANNEL)
-                    await log_ch.send(embed=make_phase_embed("victory", ev.epoch))
+                    if mode == "manual":
+                        bear_log_channel_id = guild_cfg.get("bear", {}).get("log_channel_id")
+                        log_ch = guild.get_channel(bear_log_channel_id) if bear_log_channel_id else None
+                    else:
+                        log_ch = await ensure_channel(guild, BEAR_LOG_CHANNEL)
+                        
+                    if log_ch:
+                        await log_ch.send(embed=make_phase_embed("victory", ev.epoch))
                     if ev.message_id:
                         try:
                             msg = await ch.fetch_message(ev.message_id)
@@ -390,8 +454,14 @@ class NewBearScheduler(commands.Cog):
                         )
 
                     if new_phase == "victory":
-                        log_ch = await ensure_channel(guild, BEAR_LOG_CHANNEL)
-                        await log_ch.send(embed=make_phase_embed("victory", ev.epoch))
+                        if mode == "manual":
+                            bear_log_channel_id = guild_cfg.get("bear", {}).get("log_channel_id")
+                            log_ch = guild.get_channel(bear_log_channel_id) if bear_log_channel_id else None
+                        else:
+                            log_ch = await ensure_channel(guild, BEAR_LOG_CHANNEL)
+                            
+                        if log_ch:
+                            await log_ch.send(embed=make_phase_embed("victory", ev.epoch))
                         if ev.message_id:
                             try:
                                 msg = await ch.fetch_message(ev.message_id)
@@ -616,14 +686,25 @@ class NewBearScheduler(commands.Cog):
             if active_ev is not None:
                 if active_ev.task:
                     active_ev.task.cancel()
-                ch = await ensure_channel(interaction.guild, BEAR_CHANNEL)
-                if active_ev.message_id:
+                
+                # Get channel based on mode
+                guild_cfg = gcfg.get(str(interaction.guild.id), {})
+                mode = guild_cfg.get("mode", "auto")
+                
+                if mode == "manual":
+                    bear_channel_id = guild_cfg.get("bear", {}).get("channel_id")
+                    ch = interaction.guild.get_channel(bear_channel_id) if bear_channel_id else None
+                else:
+                    ch = await ensure_channel(interaction.guild, BEAR_CHANNEL)
+                
+                if ch and active_ev.message_id:
                     try:
                         msg = await ch.fetch_message(active_ev.message_id)
                         await msg.delete()
                     except:
                         pass
-                await self._cleanup_pings(ch)
+                if ch:
+                    await self._cleanup_pings(ch)
                 # Remove from self.events
                 self.events.pop(active_ev.id, None)
                 live_feed.log(
@@ -699,8 +780,16 @@ class NewBearScheduler(commands.Cog):
                 )
 
         # Cleanup embed & pings
-        ch = await ensure_channel(interaction.guild, BEAR_CHANNEL)
-        if ev.message_id:
+        guild_cfg = gcfg.get(str(interaction.guild.id), {})
+        mode = guild_cfg.get("mode", "auto")
+        
+        if mode == "manual":
+            bear_channel_id = guild_cfg.get("bear", {}).get("channel_id")
+            ch = interaction.guild.get_channel(bear_channel_id) if bear_channel_id else None
+        else:
+            ch = await ensure_channel(interaction.guild, BEAR_CHANNEL)
+        
+        if ch and ev.message_id:
             try:
                 msg = await ch.fetch_message(ev.message_id)
                 await msg.delete()
@@ -726,7 +815,8 @@ class NewBearScheduler(commands.Cog):
                     interaction.channel,
                 )
 
-        await self._cleanup_pings(ch)
+        if ch:
+            await self._cleanup_pings(ch)
 
         # Remove from events and config
         self.events.pop(bear_id, None)
