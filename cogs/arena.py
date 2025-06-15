@@ -8,6 +8,7 @@ import discord
 from discord.ext import commands
 
 from helpers import save_config, ensure_channel
+from admin_tools import live_feed
 from config import (
     gcfg,
     ARENA_CHANNEL,
@@ -59,6 +60,8 @@ class ArenaScheduler(commands.Cog):
 
     async def _arena_loop(self):
         await self.bot.wait_until_ready()
+        last_processed_date = None
+        
         while not self.bot.is_closed():
             now = datetime.now(timezone.utc)
             today = now.date()
@@ -66,6 +69,17 @@ class ArenaScheduler(commands.Cog):
             reset_h, reset_m = map(int, ARENA_RESET_TIME.split(":"))
             arena_open = datetime.combine(today, time(open_h, open_m, tzinfo=timezone.utc))
             arena_reset = datetime.combine(today + timedelta(days=1), time(reset_h, reset_m, tzinfo=timezone.utc))
+
+            # Check if we've moved to a new day
+            if last_processed_date and last_processed_date != today:
+                live_feed.log(
+                    "Arena daily transition detected",
+                    f"From {last_processed_date} to {today}",
+                    None,
+                    None
+                )
+            
+            last_processed_date = today
 
             # Determine current phase & next target
             if now < arena_open:
@@ -78,18 +92,25 @@ class ArenaScheduler(commands.Cog):
                 phase = "scheduled"
                 target = arena_open + timedelta(days=1)
 
+            # Track global events
+            global_pings_sent = 0
+            global_pings_cleaned = 0
+            global_errors = 0
+
             # Process each guild
             for guild_id, guild_cfg in gcfg.items():
                 arena_cfg = guild_cfg.get("arena", {})
                 chan_id = arena_cfg.get("channel_id")
-                if not chan_id:
-                    continue
-
+                
                 guild = self.bot.get_guild(int(guild_id))
                 if not guild:
                     continue
 
-                ch = guild.get_channel(int(chan_id))
+                # Get channel by saved ID only
+                ch = None
+                if chan_id:
+                    ch = guild.get_channel(int(chan_id))
+                
                 if not ch:
                     continue
 
@@ -109,22 +130,26 @@ class ArenaScheduler(commands.Cog):
                         if role:
                             role_mention = role.mention
 
-                        ping_msg = await ch.send(f"{role_mention} ⚔️ Arena is now live!")
-                        arena_cfg["ping_id"] = ping_msg.id
-                        save_config(gcfg)
-                    else:
-                        live_feed.log(
-                            "Skipping arena ping (disabled in settings)",
-                            f"Guild: {guild.name}",
-                            guild,
-                            ch
-                        )
+                        try:
+                            ping_msg = await ch.send(f"{role_mention} ⚔️ Arena is now live!")
+                            arena_cfg["ping_id"] = ping_msg.id
+                            save_config(gcfg)
+                            global_pings_sent += 1
+                        except (discord.Forbidden, discord.HTTPException) as e:
+                            global_errors += 1
+                            live_feed.log(
+                                "Failed to send arena ping",
+                                f"Guild: {guild.name} • Error: {e}",
+                                guild,
+                                ch
+                            )
 
                 # Cleanup ping after reset
                 if phase == "scheduled" and arena_cfg.get("ping_id"):
                     try:
                         ping_msg = await ch.fetch_message(arena_cfg["ping_id"])
                         await ping_msg.delete()
+                        global_pings_cleaned += 1
                     except (discord.NotFound, discord.Forbidden):
                         pass
                     arena_cfg["ping_id"] = None
@@ -140,6 +165,31 @@ class ArenaScheduler(commands.Cog):
                     save_config(gcfg)
 
                 self.message_map[int(guild_id)] = msg
+
+            # Log global events
+            if global_pings_sent > 0:
+                live_feed.log(
+                    "Arena ping sent globally",
+                    f"Sent to {global_pings_sent} guild(s)",
+                    None,
+                    None
+                )
+            
+            if global_pings_cleaned > 0:
+                live_feed.log(
+                    "Arena ping cleaned up globally",
+                    f"Cleaned from {global_pings_cleaned} guild(s)",
+                    None,
+                    None
+                )
+            
+            if global_errors > 0:
+                live_feed.log(
+                    "Arena errors occurred",
+                    f"{global_errors} error(s) across all guilds",
+                    None,
+                    None
+                )
 
             # Sleep until next phase or fallback interval
             sleep_secs = (target - datetime.now(timezone.utc)).total_seconds()
@@ -174,10 +224,25 @@ class ArenaScheduler(commands.Cog):
             except (discord.NotFound, discord.Forbidden):
                 # Message was deleted or we lost permissions; fall through
                 pass
+        
         # Otherwise send a fresh embed
         try:
             msg = await ch.send(embed=embed)
         except discord.Forbidden:
+            live_feed.log(
+                "Failed to send arena embed (no permissions)",
+                f"Guild: {ch.guild.name} • Channel: #{ch.name} • Phase: {phase}",
+                ch.guild,
+                ch
+            )
+            return None
+        except discord.HTTPException as e:
+            live_feed.log(
+                "Failed to send arena embed (HTTP error)",
+                f"Guild: {ch.guild.name} • Channel: #{ch.name} • Phase: {phase} • Error: {e}",
+                ch.guild,
+                ch
+            )
             return None
 
         # Persist the new message_id
@@ -188,15 +253,39 @@ class ArenaScheduler(commands.Cog):
     async def sync_now(self, guild: discord.Guild):
         """Manually sync the arena embed & ping for a single guild."""
         guild_cfg = gcfg.get(str(guild.id), {})
+        
+        # Check if guild is properly installed
+        mode = guild_cfg.get("mode")
+        if not mode:
+            live_feed.log(
+                "Arena sync for uninstalled guild",
+                f"Guild: {guild.name} • Skipping",
+                guild,
+                None
+            )
+            return
+        
         arena_cfg = guild_cfg.get("arena", {})
         chan_id = arena_cfg.get("channel_id")
 
-        if guild_cfg.get("mode") == "manual" and chan_id:
-            ch = guild.get_channel(int(chan_id))
+        # Get channel based on mode
+        ch = None
+        if mode == "manual":
+            # Manual mode: use existing channel from config
+            if chan_id:
+                ch = guild.get_channel(int(chan_id))
         else:
-            ch = await ensure_channel(guild, ARENA_CHANNEL)
+            # Auto mode: use existing channel from config
+            if chan_id:
+                ch = guild.get_channel(int(chan_id))
 
         if not ch:
+            live_feed.log(
+                "Failed to get arena channel (manual sync)",
+                f"Guild: {guild.name} • Mode: {mode} • Channel ID: {chan_id}",
+                guild,
+                None
+            )
             return
 
         # Get ping settings for this guild
@@ -226,16 +315,17 @@ class ArenaScheduler(commands.Cog):
                 if role:
                     role_mention = role.mention
 
-                ping_msg = await ch.send(f"{role_mention} ⚔️ Arena is now live!")
-                arena_cfg["ping_id"] = ping_msg.id
-                save_config(gcfg)
-            else:
-                live_feed.log(
-                    "Skipping arena ping (disabled in settings)",
-                    f"Guild: {guild.name}",
-                    guild,
-                    ch
-                )
+                try:
+                    ping_msg = await ch.send(f"{role_mention} ⚔️ Arena is now live!")
+                    arena_cfg["ping_id"] = ping_msg.id
+                    save_config(gcfg)
+                except (discord.Forbidden, discord.HTTPException) as e:
+                    live_feed.log(
+                        "Failed to send arena ping (manual sync)",
+                        f"Guild: {guild.name} • Error: {e}",
+                        guild,
+                        ch
+                    )
 
         if msg and msg.id != arena_cfg.get("message_id"):
             arena_cfg["message_id"] = msg.id

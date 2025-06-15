@@ -188,8 +188,25 @@ class NewBearScheduler(commands.Cog):
             for bear in bears[:]:  # Create a copy to safely modify during iteration
                 # Check if bear is past victory phase
                 if now > bear["epoch"] + BEAR_PHASE_OFFSETS["victory"] * 60:
-                    # Send victory message to log if it wasn't sent
-                    await log_ch.send(embed=make_phase_embed("victory", bear["epoch"]))
+                    # Send victory message to log if it wasn't sent and we have permissions
+                    if log_ch and log_ch.permissions_for(guild.me).send_messages:
+                        try:
+                            await log_ch.send(embed=make_phase_embed("victory", bear["epoch"]))
+                        except (discord.Forbidden, discord.HTTPException) as e:
+                            live_feed.log(
+                                "Failed to send victory message to log channel",
+                                f"Bear ID: {bear['id']} • Error: {e}",
+                                guild,
+                                log_ch,
+                            )
+                    elif log_ch:
+                        live_feed.log(
+                            "Skipping victory message (no send permissions)",
+                            f"Bear ID: {bear['id']} • Channel: #{log_ch.name}",
+                            guild,
+                            log_ch,
+                        )
+                    
                     dt = datetime.fromtimestamp(bear["epoch"], tz=timezone.utc)
                     live_feed.log(
                         "Cleaned up past bear (offline completion)",
@@ -248,7 +265,17 @@ class NewBearScheduler(commands.Cog):
             
         # Get guild config and mode
         guild_cfg = gcfg.get(str(ev.guild_id), {})
-        mode = guild_cfg.get("mode", "auto")
+        mode = guild_cfg.get("mode")
+        
+        # Check if guild is properly installed
+        if not mode:
+            live_feed.log(
+                "Bear event for uninstalled guild",
+                f"Guild: {guild.name} • Bear ID: {ev.id} • Skipping",
+                guild,
+                None
+            )
+            return
         
         # Get channels based on mode
         if mode == "manual":
@@ -256,13 +283,14 @@ class NewBearScheduler(commands.Cog):
             bear_channel_id = guild_cfg.get("bear", {}).get("channel_id")
             ch = guild.get_channel(bear_channel_id) if bear_channel_id else None
         else:
-            # Auto mode: ensure channels exist
-            ch = await ensure_channel(guild, BEAR_CHANNEL)
+            # Auto mode: use existing channels from config, don't create new ones
+            bear_channel_id = guild_cfg.get("bear", {}).get("channel_id")
+            ch = guild.get_channel(bear_channel_id) if bear_channel_id else None
             
         if not ch:
             live_feed.log(
                 f"Failed to get bear channel (mode: {mode})",
-                f"Guild: {guild.name} • Bear ID: {ev.id}",
+                f"Guild: {guild.name} • Bear ID: {ev.id} • Channel ID: {bear_channel_id}",
                 guild,
                 None
             )
@@ -283,10 +311,27 @@ class NewBearScheduler(commands.Cog):
                 bear_log_channel_id = guild_cfg.get("bear", {}).get("log_channel_id")
                 log_ch = guild.get_channel(bear_log_channel_id) if bear_log_channel_id else None
             else:
-                log_ch = await ensure_channel(guild, BEAR_LOG_CHANNEL)
+                # Auto mode: use existing log channel from config
+                bear_log_channel_id = guild_cfg.get("bear", {}).get("log_channel_id")
+                log_ch = guild.get_channel(bear_log_channel_id) if bear_log_channel_id else None
                 
-            if log_ch:
-                await log_ch.send(embed=make_phase_embed("victory", ev.epoch))
+            if log_ch and log_ch.permissions_for(guild.me).send_messages:
+                try:
+                    await log_ch.send(embed=make_phase_embed("victory", ev.epoch))
+                except (discord.Forbidden, discord.HTTPException) as e:
+                    live_feed.log(
+                        "Failed to send victory message to log channel",
+                        f"Bear ID: {ev.id} • Error: {e}",
+                        guild,
+                        log_ch,
+                    )
+            elif log_ch:
+                live_feed.log(
+                    "Skipping victory message (no send permissions)",
+                    f"Bear ID: {ev.id} • Channel: #{log_ch.name}",
+                    guild,
+                    log_ch,
+                )
             # Clean up
             if ev.message_id:
                 try:
@@ -381,10 +426,27 @@ class NewBearScheduler(commands.Cog):
                         bear_log_channel_id = guild_cfg.get("bear", {}).get("log_channel_id")
                         log_ch = guild.get_channel(bear_log_channel_id) if bear_log_channel_id else None
                     else:
-                        log_ch = await ensure_channel(guild, BEAR_LOG_CHANNEL)
+                        # Auto mode: use existing log channel from config
+                        bear_log_channel_id = guild_cfg.get("bear", {}).get("log_channel_id")
+                        log_ch = guild.get_channel(bear_log_channel_id) if bear_log_channel_id else None
                         
-                    if log_ch:
-                        await log_ch.send(embed=make_phase_embed("victory", ev.epoch))
+                    if log_ch and log_ch.permissions_for(guild.me).send_messages:
+                        try:
+                            await log_ch.send(embed=make_phase_embed("victory", ev.epoch))
+                        except (discord.Forbidden, discord.HTTPException) as e:
+                            live_feed.log(
+                                "Failed to send victory message to log channel",
+                                f"Bear ID: {ev.id} • Error: {e}",
+                                guild,
+                                log_ch,
+                            )
+                    elif log_ch:
+                        live_feed.log(
+                            "Skipping victory message (no send permissions)",
+                            f"Bear ID: {ev.id} • Channel: #{log_ch.name}",
+                            guild,
+                            log_ch,
+                        )
                     if ev.message_id:
                         try:
                             msg = await ch.fetch_message(ev.message_id)
@@ -458,10 +520,27 @@ class NewBearScheduler(commands.Cog):
                             bear_log_channel_id = guild_cfg.get("bear", {}).get("log_channel_id")
                             log_ch = guild.get_channel(bear_log_channel_id) if bear_log_channel_id else None
                         else:
-                            log_ch = await ensure_channel(guild, BEAR_LOG_CHANNEL)
+                            # Auto mode: use existing log channel from config
+                            bear_log_channel_id = guild_cfg.get("bear", {}).get("log_channel_id")
+                            log_ch = guild.get_channel(bear_log_channel_id) if bear_log_channel_id else None
                             
-                        if log_ch:
-                            await log_ch.send(embed=make_phase_embed("victory", ev.epoch))
+                        if log_ch and log_ch.permissions_for(guild.me).send_messages:
+                            try:
+                                await log_ch.send(embed=make_phase_embed("victory", ev.epoch))
+                            except (discord.Forbidden, discord.HTTPException) as e:
+                                live_feed.log(
+                                    "Failed to send victory message to log channel",
+                                    f"Bear ID: {ev.id} • Error: {e}",
+                                    guild,
+                                    log_ch,
+                                )
+                        elif log_ch:
+                            live_feed.log(
+                                "Skipping victory message (no send permissions)",
+                                f"Bear ID: {ev.id} • Channel: #{log_ch.name}",
+                                guild,
+                                log_ch,
+                            )
                         if ev.message_id:
                             try:
                                 msg = await ch.fetch_message(ev.message_id)
@@ -649,6 +728,13 @@ class NewBearScheduler(commands.Cog):
                 "❌ Time must be in the future", ephemeral=True
             )
 
+        # Add minimum time buffer (5 minutes)
+        min_buffer = 5 * 60  # 5 minutes in seconds
+        if epoch <= now + min_buffer:
+            return await interaction.followup.send(
+                f"❌ Time must be at least 5 minutes in the future", ephemeral=True
+            )
+
         guild_id = str(interaction.guild.id)
         cfg = gcfg.setdefault(guild_id, {})
         bears = cfg.setdefault("bears", [])
@@ -689,13 +775,26 @@ class NewBearScheduler(commands.Cog):
                 
                 # Get channel based on mode
                 guild_cfg = gcfg.get(str(interaction.guild.id), {})
-                mode = guild_cfg.get("mode", "auto")
+                mode = guild_cfg.get("mode")
+                
+                if not mode:
+                    live_feed.log(
+                        "Bear command for uninstalled guild",
+                        f"Guild: {interaction.guild.name} • Skipping",
+                        interaction.guild,
+                        interaction.channel
+                    )
+                    return await interaction.followup.send(
+                        "❌ Bot not installed in this server.", ephemeral=True
+                    )
                 
                 if mode == "manual":
                     bear_channel_id = guild_cfg.get("bear", {}).get("channel_id")
                     ch = interaction.guild.get_channel(bear_channel_id) if bear_channel_id else None
                 else:
-                    ch = await ensure_channel(interaction.guild, BEAR_CHANNEL)
+                    # Auto mode: use existing channel from config
+                    bear_channel_id = guild_cfg.get("bear", {}).get("channel_id")
+                    ch = interaction.guild.get_channel(bear_channel_id) if bear_channel_id else None
                 
                 if ch and active_ev.message_id:
                     try:
@@ -781,13 +880,26 @@ class NewBearScheduler(commands.Cog):
 
         # Cleanup embed & pings
         guild_cfg = gcfg.get(str(interaction.guild.id), {})
-        mode = guild_cfg.get("mode", "auto")
+        mode = guild_cfg.get("mode")
+        
+        if not mode:
+            live_feed.log(
+                "Bear command for uninstalled guild",
+                f"Guild: {interaction.guild.name} • Skipping",
+                interaction.guild,
+                interaction.channel
+            )
+            return await interaction.followup.send(
+                "❌ Bot not installed in this server.", ephemeral=True
+            )
         
         if mode == "manual":
             bear_channel_id = guild_cfg.get("bear", {}).get("channel_id")
             ch = interaction.guild.get_channel(bear_channel_id) if bear_channel_id else None
         else:
-            ch = await ensure_channel(interaction.guild, BEAR_CHANNEL)
+            # Auto mode: use existing channel from config
+            bear_channel_id = guild_cfg.get("bear", {}).get("channel_id")
+            ch = interaction.guild.get_channel(bear_channel_id) if bear_channel_id else None
         
         if ch and ev.message_id:
             try:

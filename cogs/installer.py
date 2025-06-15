@@ -210,7 +210,7 @@ class SimpleChannelSelector:
         
         if event_ch:
             em = await event_ch.send(embed=make_event_welcome_embed(guild_id))
-            guild_cfg["event"]["welcome_message_id"] = em.id
+            guild_cfg["event"]["message_id"] = em.id
         
         # Set welcome embed version
         guild_cfg["welcome_embed_version"] = WELCOME_EMBED_VERSION
@@ -407,11 +407,11 @@ class Installer(commands.Cog):
             
             # Update event welcome message
             event_cfg = guild_cfg.get("event", {})
-            if event_cfg.get("welcome_message_id") and event_cfg.get("channel_id"):
+            if event_cfg.get("message_id") and event_cfg.get("channel_id"):
                 event_ch = guild.get_channel(event_cfg["channel_id"])
                 if event_ch:
                     try:
-                        msg = await event_ch.fetch_message(event_cfg["welcome_message_id"])
+                        msg = await event_ch.fetch_message(event_cfg["message_id"])
                         new_embed = make_event_welcome_embed(guild_id)
                         await msg.edit(embed=new_embed)
                         updated_count += 1
@@ -542,7 +542,7 @@ class Installer(commands.Cog):
             # Store message IDs
             cfg["bear"]["welcome_message_id"] = bm.id
             cfg["arena"]["welcome_message_id"] = am.id
-            cfg["event"]["welcome_message_id"] = em.id
+            cfg["event"]["message_id"] = em.id
             cfg["welcome_embed_version"] = WELCOME_EMBED_VERSION
 
             live_feed.log(
@@ -738,53 +738,162 @@ class Installer(commands.Cog):
                             await ev.task
                         except asyncio.CancelledError:
                             pass
-                        live_feed.log(
-                            "Cancelled bear task",
-                            f"Guild: {guild.name} • Bear ID: {ev.id}",
-                            guild,
-                            interaction.channel
-                        )
 
-            # Now remove the config entry
+            # Cancel any running ArenaScheduler tasks for this guild
+            arena_cog = self.bot.get_cog("ArenaScheduler")
+            if arena_cog:
+                for ev in list(arena_cog.arena_events.values()):
+                    if ev.guild_id == guild.id and ev.task:
+                        ev.task.cancel()
+                        try:
+                            await ev.task
+                        except asyncio.CancelledError:
+                            pass
+
+            # Cancel any running EventScheduler tasks for this guild
+            event_cog = self.bot.get_cog("EventScheduler")
+            if event_cog:
+                for ev in list(event_cog.events.values()):
+                    if ev.guild_id == guild.id and ev.task:
+                        ev.task.cancel()
+                        try:
+                            await ev.task
+                        except asyncio.CancelledError:
+                            pass
+
+            # Remove from config
             gcfg.pop(guild_id, None)
             save_config(gcfg)
 
             live_feed.log(
                 "Uninstall complete",
-                f"Guild: {guild.name} • Stats: {deleted_roles} roles, {deleted_channels} channels, {deleted_categories} categories, {purged} messages",
+                f"Guild: {guild.name} • Deleted: {deleted_roles} roles, {deleted_channels} channels, {deleted_categories} categories, {purged} messages • By: {interaction.user}",
                 guild,
                 interaction.channel
             )
 
-            # Create appropriate message based on mode
-            if cfg.get("mode") == "auto":
-                message = f"🧹 **Auto Mode Uninstall Complete:**\n• {deleted_roles} roles deleted\n• {deleted_channels} channels deleted\n• {deleted_categories} categories deleted\n• {purged} messages purged"
-            else:
-                message = f"🧹 **Manual Mode Uninstall Complete:**\n• {deleted_roles} roles deleted\n• Channels preserved (existing channels kept)\n• {purged} bot messages purged\n• Bot configuration removed"
-
-            await interaction.followup.send(message, ephemeral=True)
-        except Exception as e:
-            # Handle any unexpected errors gracefully
-            live_feed.log(
-                "Uninstall error",
-                f"Guild: {interaction.guild.name if interaction.guild else 'Unknown'} • Error: {str(e)}",
-                interaction.guild,
-                interaction.channel if interaction.channel else None
+            await interaction.followup.send(
+                f"✅ Uninstalled! Removed {deleted_roles} roles, {deleted_channels} channels, {deleted_categories} categories, and {purged} messages.",
+                ephemeral=True
             )
-            try:
-                await interaction.followup.send(
-                    f"❌ An error occurred during uninstall: {str(e)}", 
-                    ephemeral=True
-                )
-            except:
-                # If we can't send a followup, try a regular response
+
+        except Exception as e:
+            live_feed.log(
+                "Uninstall failed",
+                f"Guild: {guild.name} • Error: {str(e)} • By: {interaction.user}",
+                guild,
+                interaction.channel
+            )
+            await interaction.followup.send(f"❌ Uninstall failed: {str(e)}", ephemeral=True)
+
+    @app_commands.command(name="updateembeds", description="🔄 Update welcome embeds to latest format")
+    async def updateembeds(self, interaction: discord.Interaction):
+        """Manually update welcome embeds to the latest format"""
+        if not interaction.user.guild_permissions.administrator:
+            return await interaction.response.send_message("❌ Admins only.", ephemeral=True)
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        guild = interaction.guild
+        guild_id = str(guild.id)
+        guild_cfg = gcfg.get(guild_id, {})
+        
+        if not guild_cfg.get("mode"):
+            return await interaction.followup.send("❌ Bot not installed in this server.", ephemeral=True)
+        
+        current_version = guild_cfg.get("welcome_embed_version", "1.0")
+        if current_version == WELCOME_EMBED_VERSION:
+            return await interaction.followup.send("✅ Welcome embeds are already up to date.", ephemeral=True)
+        
+        live_feed.log(
+            "Manual welcome embed update",
+            f"Guild: {guild.name} • Version: {current_version} → {WELCOME_EMBED_VERSION} • By: {interaction.user}",
+            guild,
+            interaction.channel
+        )
+        
+        updated_count = 0
+        
+        # Update bear welcome message
+        bear_cfg = guild_cfg.get("bear", {})
+        if bear_cfg.get("welcome_message_id") and bear_cfg.get("channel_id"):
+            bear_ch = guild.get_channel(bear_cfg["channel_id"])
+            if bear_ch:
                 try:
-                    await interaction.response.send_message(
-                        f"❌ An error occurred during uninstall: {str(e)}", 
-                        ephemeral=True
+                    msg = await bear_ch.fetch_message(bear_cfg["welcome_message_id"])
+                    new_embed = make_bear_welcome_embed(guild_id)
+                    await msg.edit(embed=new_embed)
+                    updated_count += 1
+                    live_feed.log(
+                        "Updated bear welcome message",
+                        f"Guild: {guild.name} • Channel: #{bear_ch.name}",
+                        guild,
+                        bear_ch
                     )
-                except:
-                    pass  # If all else fails, just log the error
+                except (discord.NotFound, discord.Forbidden):
+                    live_feed.log(
+                        "Failed to update bear welcome message",
+                        f"Guild: {guild.name} • Message not found or no permission",
+                        guild,
+                        None
+                    )
+        
+        # Update arena welcome message
+        arena_cfg = guild_cfg.get("arena", {})
+        if arena_cfg.get("welcome_message_id") and arena_cfg.get("channel_id"):
+            arena_ch = guild.get_channel(arena_cfg["channel_id"])
+            if arena_ch:
+                try:
+                    msg = await arena_ch.fetch_message(arena_cfg["welcome_message_id"])
+                    new_embed = make_arena_welcome_embed(guild_id)
+                    await msg.edit(embed=new_embed)
+                    updated_count += 1
+                    live_feed.log(
+                        "Updated arena welcome message",
+                        f"Guild: {guild.name} • Channel: #{arena_ch.name}",
+                        guild,
+                        arena_ch
+                    )
+                except (discord.NotFound, discord.Forbidden):
+                    live_feed.log(
+                        "Failed to update arena welcome message",
+                        f"Guild: {guild.name} • Message not found or no permission",
+                        guild,
+                        None
+                    )
+        
+        # Update event welcome message
+        event_cfg = guild_cfg.get("event", {})
+        if event_cfg.get("message_id") and event_cfg.get("channel_id"):
+            event_ch = guild.get_channel(event_cfg["channel_id"])
+            if event_ch:
+                try:
+                    msg = await event_ch.fetch_message(event_cfg["message_id"])
+                    new_embed = make_event_welcome_embed(guild_id)
+                    await msg.edit(embed=new_embed)
+                    updated_count += 1
+                    live_feed.log(
+                        "Updated event welcome message",
+                        f"Guild: {guild.name} • Channel: #{event_ch.name}",
+                        guild,
+                        event_ch
+                    )
+                except (discord.NotFound, discord.Forbidden):
+                    live_feed.log(
+                        "Failed to update event welcome message",
+                        f"Guild: {guild.name} • Message not found or no permission",
+                        guild,
+                        None
+                    )
+        
+        # Update version in config
+        guild_cfg["welcome_embed_version"] = WELCOME_EMBED_VERSION
+        save_config(gcfg)
+        
+        await interaction.followup.send(
+            f"✅ Updated {updated_count} welcome embed(s) to version {WELCOME_EMBED_VERSION}.",
+            ephemeral=True
+        )
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Installer(bot))

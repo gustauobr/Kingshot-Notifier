@@ -15,6 +15,7 @@ from helpers import save_config, ensure_channel
 from config import gcfg, EVENT_CHANNEL, EMBED_COLOR_EVENT, EMOJI_THUMBNAILS_EVENTS
 from admin_tools import live_feed
 from config_helpers import get_event_ping_settings
+from welcome_embeds import make_event_welcome_embed, WELCOME_EMBED_VERSION
 
 EVENT_TEMPLATES = {
     "hall_of_governors": {
@@ -78,25 +79,7 @@ EVENT_EMOJIS = {
     "castle_battle": "🏰"
 }
 
-def make_event_welcome_embed() -> discord.Embed:
-    """
-    Used by /install auto to send a friendly explanation
-    into the Events channel.
-    """
-    embed = discord.Embed(
-        title="🏆 Event Notifications 🏆",
-        description=(
-            "📢 **This channel will receive announcements for upcoming events!**\n\n"
-            "<:stateagekingshot300x291:1375519500820025454> **Add** an event: `/addevent`\n"
-            "🔍 **List** upcoming events: `/listevents`\n"
-            "❌ **Cancel** an event: `/cancelevent`\n\n"
-            "🛡️ Stay tuned for upcoming events! 🏆"
-        ),
-        color=EMBED_COLOR_EVENT
-    )
-    embed.set_footer(text="👑 Kingshot Bot • Events • UTC")
-    return embed
-
+# make_event_welcome_embed is now imported from welcome_embeds.py
 
 class EventEntry:
     def __init__(
@@ -361,28 +344,54 @@ class EventScheduler(commands.Cog):
             if chan_id:
                 ch = guild.get_channel(chan_id)
             else:
+                # Only try to find by name if we have a channel ID, don't create new channels
                 ch = discord.utils.get(guild.text_channels, name=EVENT_CHANNEL)
                 if not ch:
-                    ch = await ensure_channel(guild, EVENT_CHANNEL)
                     live_feed.log(
-                        "Created event channel",
-                        f"Guild: {guild.name} • Channel: #{ch.name}",
+                        "Missing event channel",
+                        f"Guild: {guild.name} • Mode: {guild_cfg.get('mode')} • Channel ID: {chan_id}",
                         guild,
-                        ch
+                        None
                     )
+                    continue
 
-            # ─── Ensure welcome embed exists ─────────────────────
+            # ─── Ensure welcome embed exists and is up to date ─────────────────────
             evt_cfg = guild_cfg.setdefault("event", {})
             welcome_id = evt_cfg.get("message_id")
             welcome_msg = None
+            
+            # Check if welcome embed needs updating
+            current_version = guild_cfg.get("welcome_embed_version", "1.0")
+            needs_update = current_version != WELCOME_EMBED_VERSION
+            
             if welcome_id:
                 try:
                     welcome_msg = await ch.fetch_message(welcome_id)
+                    # Update the embed if version is outdated
+                    if needs_update:
+                        new_embed = make_event_welcome_embed(guild.id)
+                        await welcome_msg.edit(embed=new_embed)
+                        guild_cfg["welcome_embed_version"] = WELCOME_EMBED_VERSION
+                        save_config(gcfg)
+                        live_feed.log(
+                            "Updated event welcome embed",
+                            f"Guild: {guild.name} • Channel: #{ch.name} • Version: {current_version} → {WELCOME_EMBED_VERSION}",
+                            guild,
+                            ch
+                        )
                 except (discord.NotFound, discord.Forbidden):
                     welcome_msg = None
+                    live_feed.log(
+                        "Failed to fetch event welcome message",
+                        f"Guild: {guild.name} • Channel: #{ch.name} • Message ID: {welcome_id}",
+                        guild,
+                        ch
+                    )
+            
             if not welcome_msg:
-                msg = await ch.send(embed=make_event_welcome_embed())
+                msg = await ch.send(embed=make_event_welcome_embed(guild.id))
                 evt_cfg["message_id"] = msg.id
+                guild_cfg["welcome_embed_version"] = WELCOME_EMBED_VERSION
                 save_config(gcfg)
                 live_feed.log(
                     "Created welcome message",
@@ -632,15 +641,22 @@ class EventScheduler(commands.Cog):
                     ch = guild.get_channel(chan_id)
                 else:
                     ch = discord.utils.get(guild.text_channels, name=EVENT_CHANNEL)
-                    if not ch:
-                        ch = await ensure_channel(guild, EVENT_CHANNEL)
-                next_ev.task = asyncio.create_task(self._run_event_cycle(guild, next_ev, ch))
-                live_feed.log(
-                    "Started next event",
-                    f"Guild: {guild.name} • Event: {next_ev.title} • ID: {next_ev.id} • Start: <t:{next_ev.start_epoch}:F>",
-                    guild,
-                    ch
-                )
+                
+                if not ch:
+                    live_feed.log(
+                        "Failed to find event channel for next event",
+                        f"Guild: {guild.name} • Event: {next_ev.title} • ID: {next_ev.id}",
+                        guild,
+                        None
+                    )
+                else:
+                    next_ev.task = asyncio.create_task(self._run_event_cycle(guild, next_ev, ch))
+                    live_feed.log(
+                        "Started next event",
+                        f"Guild: {guild.name} • Event: {next_ev.title} • ID: {next_ev.id} • Start: <t:{next_ev.start_epoch}:F>",
+                        guild,
+                        ch
+                    )
 
         except asyncio.CancelledError:
             live_feed.log(
@@ -663,6 +679,19 @@ class EventScheduler(commands.Cog):
             )
             return await interaction.followup.send(
                 "❌ Time must be in the future.", ephemeral=True
+            )
+
+        # Add minimum time buffer (5 minutes)
+        min_buffer = 5 * 60  # 5 minutes in seconds
+        if s_epoch <= now + min_buffer:
+            live_feed.log(
+                "Failed to create event",
+                f"Guild: {guild.name} • Error: Start time too close (less than 5 minutes) • By: {interaction.user}",
+                guild,
+                interaction.channel
+            )
+            return await interaction.followup.send(
+                "❌ Start time must be at least 5 minutes in the future.", ephemeral=True
             )
 
         guild_cfg = gcfg.setdefault(str(guild.id), {})
@@ -696,19 +725,16 @@ class EventScheduler(commands.Cog):
         else:
             ch = discord.utils.get(guild.text_channels, name=EVENT_CHANNEL)
             if not ch:
-                try:
-                    ch = await ensure_channel(guild, EVENT_CHANNEL)
-                except Exception as e:
-                    live_feed.log(
-                        "Failed to create event channel",
-                        f"Guild: {guild.name} • Error: {str(e)}",
-                        guild,
-                        None
-                    )
-                    return await interaction.followup.send(
-                        "❌ Failed to create event channel. Please contact an administrator.",
-                        ephemeral=True
-                    )
+                live_feed.log(
+                    "Failed to find event channel",
+                    f"Guild: {guild.name} • Channel ID: {chan_id}",
+                    guild,
+                    None
+                )
+                return await interaction.followup.send(
+                    "❌ Could not find event channel. Please contact an administrator.",
+                    ephemeral=True
+                )
 
         if not ch:
             live_feed.log(
