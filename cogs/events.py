@@ -360,6 +360,13 @@ class EventScheduler(commands.Cog):
             welcome_id = evt_cfg.get("message_id")
             welcome_msg = None
             
+            live_feed.log(
+                "Checking event welcome message",
+                f"Guild: {guild.name} • Channel: #{ch.name} • Saved ID: {welcome_id}",
+                guild,
+                ch
+            )
+            
             # Check if welcome embed needs updating
             current_version = guild_cfg.get("welcome_embed_version", "1.0")
             needs_update = current_version != WELCOME_EMBED_VERSION
@@ -367,6 +374,12 @@ class EventScheduler(commands.Cog):
             if welcome_id:
                 try:
                     welcome_msg = await ch.fetch_message(welcome_id)
+                    live_feed.log(
+                        "Successfully fetched existing welcome message",
+                        f"Guild: {guild.name} • Channel: #{ch.name} • Message ID: {welcome_id}",
+                        guild,
+                        ch
+                    )
                     # Update the embed if version is outdated
                     if needs_update:
                         new_embed = make_event_welcome_embed(guild.id)
@@ -379,23 +392,43 @@ class EventScheduler(commands.Cog):
                             guild,
                             ch
                         )
-                except (discord.NotFound, discord.Forbidden):
+                except (discord.NotFound, discord.Forbidden) as e:
                     welcome_msg = None
                     live_feed.log(
                         "Failed to fetch event welcome message",
-                        f"Guild: {guild.name} • Channel: #{ch.name} • Message ID: {welcome_id}",
+                        f"Guild: {guild.name} • Channel: #{ch.name} • Message ID: {welcome_id} • Error: {type(e).__name__}",
                         guild,
                         ch
                     )
+            else:
+                live_feed.log(
+                    "No saved welcome message ID found",
+                    f"Guild: {guild.name} • Channel: #{ch.name}",
+                    guild,
+                    ch
+                )
             
             if not welcome_msg:
+                live_feed.log(
+                    "Creating new welcome message",
+                    f"Guild: {guild.name} • Channel: #{ch.name} • Reason: {'No saved ID' if not welcome_id else 'Fetch failed'}",
+                    guild,
+                    ch
+                )
                 msg = await ch.send(embed=make_event_welcome_embed(guild.id))
                 evt_cfg["message_id"] = msg.id
                 guild_cfg["welcome_embed_version"] = WELCOME_EMBED_VERSION
                 save_config(gcfg)
                 live_feed.log(
                     "Created welcome message",
-                    f"Guild: {guild.name} • Channel: #{ch.name}",
+                    f"Guild: {guild.name} • Channel: #{ch.name} • New ID: {msg.id}",
+                    guild,
+                    ch
+                )
+            else:
+                live_feed.log(
+                    "Using existing welcome message",
+                    f"Guild: {guild.name} • Channel: #{ch.name} • Message ID: {welcome_id}",
                     guild,
                     ch
                 )

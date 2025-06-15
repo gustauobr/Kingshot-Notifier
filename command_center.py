@@ -274,3 +274,13 @@ async def audit_roles(bot):
                 print(f"⚠️ {role.name} is ABOVE bot role! (pos: {role.position})")
         if not found_issues:
             print("✅ All roles properly configured")
+
+async def update_guild_count(bot):
+    print("\n📊 Updating guild count...")
+    print(f"• Guilds: {len(bot.guilds)}")
+
+async def update_role_counts(bot):
+    print("\n🔍 Updating role counts...")
+    await update_guild_count(bot)
+    await show_bears(bot)
+    await show_events(bot)

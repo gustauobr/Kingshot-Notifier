@@ -49,6 +49,11 @@ class ArenaScheduler(commands.Cog):
         # start the loop
         self.task: asyncio.Task | None = None
 
+    @property
+    def arena_events(self) -> dict:
+        """Property to match installer expectations during uninstall."""
+        return {}
+
     async def cog_load(self):
         # Now that the bot is fully initialised, start our arena loop
         self.task = asyncio.create_task(self._arena_loop())
