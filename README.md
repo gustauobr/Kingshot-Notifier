@@ -42,7 +42,8 @@ A powerful multi-server Discord bot designed for gaming communities, featuring c
 ## 🛠️ Installation
 
 ### Quick Setup
-[**Add Kingshot Bot to Your Server**](https://discord.com/oauth2/authorize?client_id=1366499729923379271&permissions=2416011344&integration_type=0&scope=bot+applications.commands)
+**Bot is in the maximum amount of servers currently! join the support server to be notified when it will be re-opened!**
+[**Join the support server here!**](https://discord.gg/MPFdHdQXzf)
 
 ### Required Permissions
 - **Send Messages** - Core functionality
