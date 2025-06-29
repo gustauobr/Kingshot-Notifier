@@ -123,6 +123,15 @@ Each system supports customizable notification timing:
 
 ---
 
+## 🚈 Hosting on Railway
+
+1. Fork this repo or connect it directly in Railway.
+2. Create a new project and add the `KINGSHOT_BOT_TOKEN` variable in the dashboard.
+3. Set the start command to `python bot.py` (or keep the provided `Procfile`).
+4. Deploy and monitor the logs to confirm the bot starts.
+
+---
+
 ## 🆘 Support
 
 **Need help? Join our support server!**
