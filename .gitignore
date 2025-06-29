@@ -63,11 +63,7 @@ logs/
 bot_config.json
 bot_config_dev.json
 logic.txt
-<<<<<<< codex/rodar-projeto-no-railway
 railway.json
-=======
-railyway.json
->>>>>>> main
 .env
 .env
 
