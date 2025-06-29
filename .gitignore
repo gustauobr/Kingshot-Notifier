@@ -64,7 +64,6 @@ bot_config.json
 bot_config_dev.json
 logic.txt
 railyway.json
-admin_tools.py
 .env
 
 
