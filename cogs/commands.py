@@ -58,21 +58,11 @@ class Core(commands.Cog):
             color=EMBED_COLOR_PRIMARY,
         )
         embed.set_thumbnail(
-            url=(
-                self.bot.user.avatar.url
-                if self.bot.user.avatar
-                else discord.Embed.Empty
-            )
-
+            url=self.bot.user.avatar.url if self.bot.user.avatar else None
         )
         embed.set_footer(
             text="made by ninjardx 🏆",
-            icon_url=(
-                self.bot.user.avatar.url
-                if self.bot.user.avatar
-                else discord.Embed.Empty
-            ),
-
+            icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None,
         )
         await dest.send(embed=embed)
         live_feed.log(
@@ -124,11 +114,7 @@ class Core(commands.Cog):
         if self.footer_input.value:
             embed.set_footer(
                 text=self.footer_input.value,
-                icon_url=(
-                    self.bot.user.avatar.url
-                    if self.bot.user.avatar
-                    else discord.Embed.Empty
-                ),
+                icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None,
             )
         if self.thumbnail_input.value:
             embed.set_thumbnail(url=self.thumbnail_input.value)
