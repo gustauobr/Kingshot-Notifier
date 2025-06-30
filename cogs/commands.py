@@ -88,7 +88,140 @@ class Core(commands.Cog):
 
     @app_commands.command(
         name="synccommands", description="🔧 Force sync of slash commands (Admins only)"
-@@ -233,55 +225,51 @@ class EmbedModal(ui.Modal, title="Create an Embed"):
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def synccommands(self, interaction: Interaction):
+        """Sync the bot's slash commands to this server."""
+        await interaction.response.defer(ephemeral=True)
+        live_feed.log(
+            "Syncing commands",
+            f"Guild: {interaction.guild.name} • By: {interaction.user}",
+            interaction.guild,
+            interaction.channel,
+        )
+        synced = await self.bot.tree.sync(guild=interaction.guild)
+        live_feed.log(
+            "Commands synced",
+            f"Guild: {interaction.guild.name} • Count: {len(synced)}",
+            interaction.guild,
+            interaction.channel,
+        )
+        await interaction.followup.send(
+            f"✅ Synced {len(synced)} commands to this server.", ephemeral=True
+        )
+
+
+class General(commands.Cog):
+    """General utility slash commands."""
+
+    def __init__(self, bot: commands.Bot):
+        self.bot = bot
+
+    @app_commands.command(name="help", description="💠View all Kingshot Bot commands")
+    async def help(self, interaction: Interaction):
+        """Show help information."""
+        live_feed.log(
+            "Help command used",
+            f"Guild: {interaction.guild.name} • By: {interaction.user}",
+            interaction.guild,
+            interaction.channel,
+        )
+        embed = Embed(
+            title="🤴 Kingshot Bot • Help",
+            description=(
+                "**Here's what I can do:**\n\n"
+                "🛠️ **Admin Commands:**\n"
+                "• `/install auto` — full automatic setup\n"
+                "• `/install manual` — select your own channels\n"
+                "• `/uninstall` — remove all bot channels/roles\n\n"
+                "<:BEAREVENT:1375520846407270561> **Bear Events:**\n"
+                "• `/setbeartime` — schedule a Bear attack\n"
+                "• `/listbears` — list scheduled Bears\n"
+                "• `/cancelbear` — cancel a Bear event\n\n"
+                "⚔️ **Arena Battles:**\n"
+                "• (Automatically posted daily)\n\n"
+                "🏆 **Events:**\n"
+                "• `/addevent` — schedule a new event\n"
+                "• `/listevents` — list upcoming events\n"
+                "• `/cancelevent` — cancel an event\n\n"
+                "📣 **Notifications:**\n"
+                "• `/viewsettings` — show current ping settings\n"
+                "• `/setarenaping` — configure arena pings\n"
+                "• `/setbearpings` — configure bear pings\n"
+                "• `/seteventpings` — configure event pings\n\n"
+                "🪄 **Misc:**\n"
+                "• `/embed` — create an embed message with the bot\n"
+                "• `/synccommands` — force sync of slash commands\n"
+                "• `/purge` — quickly remove messages\n\n"
+                "📌 **[Join the support server](https://discord.gg/MPFdHdQXzf)**"
+            ),
+            color=EMBED_COLOR_PRIMARY,
+        )
+        embed.set_footer(
+            text="Kingshot Bot • created by ninjardx 👑",
+            icon_url=self.bot.user.avatar.url if self.bot.user.avatar else None,
+        )
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(
+        name="purge",
+        description="🧹 Delete a number of recent user messages in this channel",
+    )
+    @app_commands.describe(amount="How many messages to consider (1–100)")
+    @app_commands.checks.has_permissions(manage_messages=True)
+    async def purge(self, interaction: Interaction, amount: int):
+        """Purge recent non-bot messages in the current channel."""
+        await interaction.response.defer(ephemeral=True)
+        ch = interaction.channel
+        if not isinstance(ch, discord.TextChannel):
+            live_feed.log(
+                "Purge failed",
+                f"Guild: {interaction.guild.name} • Error: Invalid channel type",
+                interaction.guild,
+                interaction.channel,
+            )
+            return await interaction.followup.send(
+                "❌ Could not determine the channel.", ephemeral=True
+            )
+
+        live_feed.log(
+            "Starting message purge",
+            f"Guild: {interaction.guild.name} • Channel: #{ch.name} • Amount: {amount} • By: {interaction.user}",
+            interaction.guild,
+            ch,
+        )
+
+        # Clamp between 1 and 100
+        limit = max(1, min(amount, 100))
+        # Bulk-delete up to `limit` of the most recent non-bot messages
+        deleted = await ch.purge(limit=limit, check=lambda m: not m.author.bot)
+        # Any bot messages within those `limit` were skipped
+        kept = limit - len(deleted)
+
+        live_feed.log(
+            "Purge complete",
+            f"Guild: {interaction.guild.name} • Channel: #{ch.name} • Deleted: {len(deleted)} • Kept: {kept}",
+            interaction.guild,
+            ch,
+        )
+
+        await interaction.followup.send(
+            f"✅ Deleted {len(deleted)} message(s), kept {kept} bot message(s).",
+            ephemeral=True,
+        )
+
+
+class EmbedModal(ui.Modal, title="Create an Embed"):
+    """Modal dialog for creating a custom embed."""
+
+    def __init__(self, bot: commands.Bot):
+        super().__init__()
+        self.bot = bot
+        self.title_input = ui.TextInput(label="Title", required=True, max_length=256)
+        self.description_input = ui.TextInput(
+            label="Description", style=discord.TextStyle.paragraph, required=True
+        )
+        self.footer_input = ui.TextInput(
             label="Footer (optional)", required=False, max_length=256
         )
         self.thumbnail_input = ui.TextInput(
@@ -140,3 +273,10 @@ class Utility(commands.Cog):
             interaction.guild,
             interaction.channel,
         )
+        await interaction.response.send_modal(EmbedModal(self.bot))
+
+
+async def setup(bot: commands.Bot):
+    await bot.add_cog(Core(bot))
+    await bot.add_cog(General(bot))
+    await bot.add_cog(Utility(bot))
