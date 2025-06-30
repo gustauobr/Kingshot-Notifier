@@ -110,6 +110,12 @@ Each system supports customizable notification timing:
 - **Auto Mode**: Creates all channels automatically with locked permissions
 - **Manual Mode**: Select existing channels for each system
 
+### 🔗 Firebase Integration
+Scheduled events can be stored in Firebase Firestore. Set the environment
+variable `FIREBASE_CREDENTIALS` to the path of your service account JSON file.
+When configured, all event changes are synced to the `guilds/{guild_id}`
+document collection.
+
 ---
 
 ## 🎯 Key Features

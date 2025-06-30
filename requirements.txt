@@ -6,3 +6,4 @@ isort
 bandit
 pytest
 mypy
+firebase-admin

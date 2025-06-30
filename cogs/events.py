@@ -13,6 +13,11 @@ from discord.ext import commands
 
 from helpers import save_config, ensure_channel
 from config import gcfg, EVENT_CHANNEL, EMBED_COLOR_EVENT, EMOJI_THUMBNAILS_EVENTS
+from firebase_events import (
+    is_enabled as firebase_enabled,
+    load_events as firebase_load_events,
+    save_events as firebase_save_events,
+)
 from admin_tools import live_feed
 from config_helpers import get_event_ping_settings
 from welcome_embeds import make_event_welcome_embed, WELCOME_EMBED_VERSION
@@ -22,50 +27,50 @@ EVENT_TEMPLATES = {
         "title": "Hall Of Governors",
         "description": "Compete in the Hall Of Governors event!",
         "thumbnail": "https://example.com/hog.png",
-        "duration_minutes": 7 * 24 * 60  # 7 days
+        "duration_minutes": 7 * 24 * 60,  # 7 days
     },
     "all_out_event": {
         "title": "All Out Event",
         "description": "Participate in the All Out Event!",
         "thumbnail": "https://example.com/allout.png",
-        "duration_minutes": 24 * 60  # 1 day
+        "duration_minutes": 24 * 60,  # 1 day
     },
     "viking_vengeance": {
         "title": "Viking Vengeance",
         "description": "Join the Viking Vengeance event!",
         "thumbnail": "https://example.com/viking.png",
-        "duration_minutes": 30  # 30 minutes
+        "duration_minutes": 30,  # 30 minutes
     },
     "ceasares_fury": {
         "title": "Ceasares Fury",
         "description": "Rally against the Ceasares!",
         "thumbnail": "https://example.com/ceasares.png",
-        "duration_minutes": 10  # 10 minutes
+        "duration_minutes": 10,  # 10 minutes
     },
     "swordland_showdown": {
         "title": "Swordland Showdown",
         "description": "Enter the Swordland Showdown!",
         "thumbnail": "https://example.com/swordland.png",
-        "duration_minutes": 60  # 1 hour
+        "duration_minutes": 60,  # 1 hour
     },
     "kingdom_v_kingdom": {
         "title": "Kingdom V Kingdom",
         "description": "Battle in the Kingdom V Kingdom event!",
         "thumbnail": "https://example.com/kvk.png",
-        "duration_minutes": 5 * 24 * 60  # 5 days
+        "duration_minutes": 5 * 24 * 60,  # 5 days
     },
     "sanctuary_battles": {
         "title": "Sanctuary Battle",
         "description": "Fight for control of the Sanctuary!",
         "thumbnail": "https://example.com/sanctuary.png",
-        "duration_minutes": 2 * 60  # 2 hours
+        "duration_minutes": 2 * 60,  # 2 hours
     },
     "castle_battle": {
         "title": "Castle Battle",
         "description": "Participate in the Castle Battle!",
         "thumbnail": "https://example.com/castle.png",
-        "duration_minutes": 1 * 60 * 4  # 4 hours
-    }
+        "duration_minutes": 1 * 60 * 4,  # 4 hours
+    },
 }
 
 EVENT_EMOJIS = {
@@ -76,10 +81,11 @@ EVENT_EMOJIS = {
     "swordland_showdown": "🗡️",
     "kingdom_v_kingdom": "👑",
     "sanctuary_battles": "🛡️",
-    "castle_battle": "🏰"
+    "castle_battle": "🏰",
 }
 
 # make_event_welcome_embed is now imported from welcome_embeds.py
+
 
 class EventEntry:
     def __init__(
@@ -91,14 +97,14 @@ class EventEntry:
         end_epoch: int,
         guild_id: int,
         thumbnail: str = "",
-        template_key: str = None
+        template_key: str = None,
     ):
         self.id = id
         self.title = title
         self.description = description
         self.start_epoch = start_epoch
         self.end_epoch = end_epoch
-        self.guild_id = guild_id   
+        self.guild_id = guild_id
         self.thumbnail = thumbnail
         self.template_key = template_key
         self.message: discord.Message | None = None
@@ -110,17 +116,17 @@ class EventEntry:
             title=self.title,
             description=self.description,
             timestamp=datetime.fromtimestamp(self.start_epoch, tz=timezone.utc),
-            color=EMBED_COLOR_EVENT
+            color=EMBED_COLOR_EVENT,
         )
         embed.add_field(
             name="🗓️ Starts",
             value=f"<t:{self.start_epoch}:F> (<t:{self.start_epoch}:R>)",
-            inline=True
+            inline=True,
         )
         embed.add_field(
             name="⏳ Ends",
             value=f"<t:{self.end_epoch}:F> (<t:{self.end_epoch}:R>)",
-            inline=True
+            inline=True,
         )
         # Use emoji thumbnail if available for template events
         if self.template_key and self.template_key in EMOJI_THUMBNAILS_EVENTS:
@@ -130,25 +136,34 @@ class EventEntry:
         embed.set_footer(text="Kingshot Bot • Events • UTC")
         return embed
 
+
 class AddEventView(discord.ui.View):
     def __init__(self, bot, scheduler):
         super().__init__(timeout=60)
         self.bot = bot
         self.scheduler = scheduler
 
-    @discord.ui.button(label="Manual Event", style=discord.ButtonStyle.primary, emoji="✏️", row=0)
-    async def manual_event(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(
+        label="Manual Event", style=discord.ButtonStyle.primary, emoji="✏️", row=0
+    )
+    async def manual_event(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
         modal = ManualEventModal(self.scheduler)
         await interaction.response.send_modal(modal)
 
-    @discord.ui.button(label="Template Event", style=discord.ButtonStyle.primary, emoji="📋", row=0)
-    async def template_event(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(
+        label="Template Event", style=discord.ButtonStyle.primary, emoji="📋", row=0
+    )
+    async def template_event(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
         # Create a new view with template options
         template_view = TemplateSelectView(self.scheduler)
         await interaction.response.edit_message(
-            content="Select an event template:",
-            view=template_view
+            content="Select an event template:", view=template_view
         )
+
 
 class TemplateSelectView(discord.ui.View):
     def __init__(self, scheduler):
@@ -160,18 +175,21 @@ class TemplateSelectView(discord.ui.View):
             emoji = EVENT_EMOJIS.get(template_key, "📋")
             self.add_item(TemplateButton(template_key, template, emoji))
 
+
 class TemplateButton(discord.ui.Button):
     def __init__(self, template_key: str, template: dict, emoji: str):
         # Convert template_key to a readable label
         label = template_key.replace("_", " ").title()
-        
+
         # Parse the emoji string into a PartialEmoji if it's a custom emoji
         if emoji.startswith("<") and emoji.endswith(">"):
             # Extract emoji ID and name from the string
             # Format: <:name:id>
             emoji_parts = emoji.strip("<>").split(":")
             if len(emoji_parts) == 3:
-                emoji = discord.PartialEmoji(name=emoji_parts[1], id=int(emoji_parts[2]))
+                emoji = discord.PartialEmoji(
+                    name=emoji_parts[1], id=int(emoji_parts[2])
+                )
             else:
                 emoji = "📋"  # Fallback if parsing fails
         else:
@@ -182,7 +200,7 @@ class TemplateButton(discord.ui.Button):
             label=label,
             style=discord.ButtonStyle.primary,
             emoji=emoji,
-            custom_id=f"template_{template_key}"
+            custom_id=f"template_{template_key}",
         )
         self.template_key = template_key
         self.template = template
@@ -191,34 +209,31 @@ class TemplateButton(discord.ui.Button):
         modal = TemplateEventModal(self.view.scheduler, self.template_key)
         await interaction.response.send_modal(modal)
 
+
 class ManualEventModal(discord.ui.Modal, title="Create Manual Event"):
     event_title = discord.ui.TextInput(
         label="Event Title",
         placeholder="Enter the event title",
         required=True,
-        max_length=100
+        max_length=100,
     )
     event_description = discord.ui.TextInput(
         label="Event Description",
         placeholder="Describe the event details",
         required=True,
         style=discord.TextStyle.paragraph,
-        max_length=1000
+        max_length=1000,
     )
     event_start = discord.ui.TextInput(
-        label="Start Time",
-        placeholder="YYYY-MM-DD HH:MM UTC",
-        required=True
+        label="Start Time", placeholder="YYYY-MM-DD HH:MM UTC", required=True
     )
     event_end = discord.ui.TextInput(
-        label="End Time",
-        placeholder="YYYY-MM-DD HH:MM UTC",
-        required=True
+        label="End Time", placeholder="YYYY-MM-DD HH:MM UTC", required=True
     )
     event_thumbnail = discord.ui.TextInput(
         label="Thumbnail URL",
         placeholder="Optional: Enter an image URL for the event",
-        required=False
+        required=False,
     )
 
     def __init__(self, scheduler):
@@ -228,21 +243,24 @@ class ManualEventModal(discord.ui.Modal, title="Create Manual Event"):
     async def on_submit(self, interaction: discord.Interaction):
         # Parse times
         try:
-            st = datetime.strptime(self.event_start.value, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
-            et = datetime.strptime(self.event_end.value, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+            st = datetime.strptime(self.event_start.value, "%Y-%m-%d %H:%M").replace(
+                tzinfo=timezone.utc
+            )
+            et = datetime.strptime(self.event_end.value, "%Y-%m-%d %H:%M").replace(
+                tzinfo=timezone.utc
+            )
         except ValueError:
             return await interaction.response.send_message(
                 "❌ Invalid time format. Please use YYYY-MM-DD HH:MM UTC",
-                ephemeral=True
+                ephemeral=True,
             )
-        
+
         s_epoch = int(st.timestamp())
         e_epoch = int(et.timestamp())
-        
+
         if e_epoch <= s_epoch:
             return await interaction.response.send_message(
-                "❌ End time must be after start time.",
-                ephemeral=True
+                "❌ End time must be after start time.", ephemeral=True
             )
 
         await interaction.response.defer(ephemeral=True)
@@ -252,14 +270,13 @@ class ManualEventModal(discord.ui.Modal, title="Create Manual Event"):
             description=self.event_description.value,
             s_epoch=s_epoch,
             e_epoch=e_epoch,
-            thumbnail=self.event_thumbnail.value
+            thumbnail=self.event_thumbnail.value,
         )
+
 
 class TemplateEventModal(discord.ui.Modal):
     event_start = discord.ui.TextInput(
-        label="Start Time",
-        placeholder="YYYY-MM-DD HH:MM UTC",
-        required=True
+        label="Start Time", placeholder="YYYY-MM-DD HH:MM UTC", required=True
     )
 
     def __init__(self, scheduler, template_key):
@@ -271,11 +288,13 @@ class TemplateEventModal(discord.ui.Modal):
 
     async def on_submit(self, interaction: discord.Interaction):
         try:
-            st = datetime.strptime(self.event_start.value, "%Y-%m-%d %H:%M").replace(tzinfo=timezone.utc)
+            st = datetime.strptime(self.event_start.value, "%Y-%m-%d %H:%M").replace(
+                tzinfo=timezone.utc
+            )
         except ValueError:
             return await interaction.response.send_message(
                 "❌ Invalid time format. Please use YYYY-MM-DD HH:MM UTC",
-                ephemeral=True
+                ephemeral=True,
             )
 
         s_epoch = int(st.timestamp())
@@ -289,8 +308,9 @@ class TemplateEventModal(discord.ui.Modal):
             s_epoch=s_epoch,
             e_epoch=e_epoch,
             thumbnail=self.template["thumbnail"],
-            template_key=self.template_key
+            template_key=self.template_key,
         )
+
 
 class EventScheduler(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -313,15 +333,22 @@ class EventScheduler(commands.Cog):
 
         for guild in self.bot.guilds:
             guild_cfg = gcfg.get(str(guild.id), {})
+            if firebase_enabled():
+                try:
+                    fb_events = firebase_load_events(str(guild.id))
+                    if fb_events:
+                        guild_cfg["events"] = fb_events
+                except Exception as e:
+                    live_feed.log(
+                        "Firebase load failed",
+                        f"Guild: {guild.name} • Error: {e}",
+                        guild,
+                        None,
+                    )
             if guild_cfg.get("mode") != "auto":
                 continue
 
-            live_feed.log(
-                "Initializing events",
-                f"Guild: {guild.name}",
-                guild,
-                None
-            )
+            live_feed.log("Initializing events", f"Guild: {guild.name}", guild, None)
 
             # 1) Prune expired events
             ev_list = guild_cfg.setdefault("events", [])
@@ -332,9 +359,19 @@ class EventScheduler(commands.Cog):
                     "Pruned expired events",
                     f"Guild: {guild.name} • Count: {len(expired)}",
                     guild,
-                    None
+                    None,
                 )
             save_config(gcfg)
+            if firebase_enabled():
+                try:
+                    firebase_save_events(str(guild.id), guild_cfg["events"])
+                except Exception as e:
+                    live_feed.log(
+                        "Firebase save failed",
+                        f"Guild: {guild.name} • Error: {e}",
+                        guild,
+                        None,
+                    )
 
             if not ev_list:
                 continue
@@ -351,7 +388,7 @@ class EventScheduler(commands.Cog):
                         "Missing event channel",
                         f"Guild: {guild.name} • Mode: {guild_cfg.get('mode')} • Channel ID: {chan_id}",
                         guild,
-                        None
+                        None,
                     )
                     continue
 
@@ -359,18 +396,18 @@ class EventScheduler(commands.Cog):
             evt_cfg = guild_cfg.setdefault("event", {})
             welcome_id = evt_cfg.get("message_id")
             welcome_msg = None
-            
+
             live_feed.log(
                 "Checking event welcome message",
                 f"Guild: {guild.name} • Channel: #{ch.name} • Saved ID: {welcome_id}",
                 guild,
-                ch
+                ch,
             )
-            
+
             # Check if welcome embed needs updating
             current_version = guild_cfg.get("welcome_embed_version", "1.0")
             needs_update = current_version != WELCOME_EMBED_VERSION
-            
+
             if welcome_id:
                 try:
                     welcome_msg = await ch.fetch_message(welcome_id)
@@ -378,7 +415,7 @@ class EventScheduler(commands.Cog):
                         "Successfully fetched existing welcome message",
                         f"Guild: {guild.name} • Channel: #{ch.name} • Message ID: {welcome_id}",
                         guild,
-                        ch
+                        ch,
                     )
                     # Update the embed if version is outdated
                     if needs_update:
@@ -390,7 +427,7 @@ class EventScheduler(commands.Cog):
                             "Updated event welcome embed",
                             f"Guild: {guild.name} • Channel: #{ch.name} • Version: {current_version} → {WELCOME_EMBED_VERSION}",
                             guild,
-                            ch
+                            ch,
                         )
                 except (discord.NotFound, discord.Forbidden) as e:
                     welcome_msg = None
@@ -398,22 +435,22 @@ class EventScheduler(commands.Cog):
                         "Failed to fetch event welcome message",
                         f"Guild: {guild.name} • Channel: #{ch.name} • Message ID: {welcome_id} • Error: {type(e).__name__}",
                         guild,
-                        ch
+                        ch,
                     )
             else:
                 live_feed.log(
                     "No saved welcome message ID found",
                     f"Guild: {guild.name} • Channel: #{ch.name}",
                     guild,
-                    ch
+                    ch,
                 )
-            
+
             if not welcome_msg:
                 live_feed.log(
                     "Creating new welcome message",
                     f"Guild: {guild.name} • Channel: #{ch.name} • Reason: {'No saved ID' if not welcome_id else 'Fetch failed'}",
                     guild,
-                    ch
+                    ch,
                 )
                 msg = await ch.send(embed=make_event_welcome_embed(guild.id))
                 evt_cfg["message_id"] = msg.id
@@ -423,14 +460,14 @@ class EventScheduler(commands.Cog):
                     "Created welcome message",
                     f"Guild: {guild.name} • Channel: #{ch.name} • New ID: {msg.id}",
                     guild,
-                    ch
+                    ch,
                 )
             else:
                 live_feed.log(
                     "Using existing welcome message",
                     f"Guild: {guild.name} • Channel: #{ch.name} • Message ID: {welcome_id}",
                     guild,
-                    ch
+                    ch,
                 )
 
             # 3) Reconstruct and schedule each event
@@ -443,7 +480,7 @@ class EventScheduler(commands.Cog):
                     entry["end_epoch"],
                     guild.id,
                     entry.get("thumbnail", ""),
-                    entry.get("template_key")
+                    entry.get("template_key"),
                 )
                 # Try to re-fetch existing message
                 msg_id = entry.get("message_id")
@@ -455,7 +492,7 @@ class EventScheduler(commands.Cog):
                             "Restored event message",
                             f"Guild: {guild.name} • Event: {ev.title} • ID: {ev.id}",
                             guild,
-                            ch
+                            ch,
                         )
                     except (discord.NotFound, discord.Forbidden):
                         ev.message = None
@@ -464,7 +501,7 @@ class EventScheduler(commands.Cog):
                             "Failed to restore event message",
                             f"Guild: {guild.name} • Event: {ev.title} • ID: {ev.id}",
                             guild,
-                            ch
+                            ch,
                         )
 
                 self.events[ev.id] = ev
@@ -473,20 +510,22 @@ class EventScheduler(commands.Cog):
                     "Scheduled event",
                     f"Guild: {guild.name} • Event: {ev.title} • ID: {ev.id} • Start: <t:{ev.start_epoch}:F>",
                     guild,
-                    ch
+                    ch,
                 )
 
-    async def _send_event_ping(self, ch: discord.TextChannel, guild_cfg: dict, minutes_left: int) -> int:
+    async def _send_event_ping(
+        self, ch: discord.TextChannel, guild_cfg: dict, minutes_left: int
+    ) -> int:
         # Get ping settings for this guild
         ping_settings = get_event_ping_settings(str(ch.guild.id))
-        
+
         # Check if this ping phase is enabled
         if minutes_left == 60 and not ping_settings.reminder_enabled:
             live_feed.log(
                 "Skipping 1-hour event reminder (disabled in settings)",
                 f"Guild: {ch.guild.name}",
                 ch.guild,
-                ch
+                ch,
             )
             return None
         if minutes_left == 10 and not ping_settings.final_call_enabled:
@@ -494,7 +533,7 @@ class EventScheduler(commands.Cog):
                 "Skipping 10-minute event reminder (disabled in settings)",
                 f"Guild: {ch.guild.name}",
                 ch.guild,
-                ch
+                ch,
             )
             return None
 
@@ -510,7 +549,7 @@ class EventScheduler(commands.Cog):
                 "Sent 1-hour event reminder",
                 f"Guild: {ch.guild.name} • Channel: #{ch.name} • Role: {role.name if role else '@here'}",
                 ch.guild,
-                ch
+                ch,
             )
         else:
             msg = await ch.send(f"{role_mention} 🏆 The event is starting soon!")
@@ -518,37 +557,36 @@ class EventScheduler(commands.Cog):
                 "Sent 10-minute event reminder",
                 f"Guild: {ch.guild.name} • Channel: #{ch.name} • Role: {role.name if role else '@here'}",
                 ch.guild,
-                ch
+                ch,
             )
         return msg.id
 
     async def _run_event_cycle(
-        self,
-        guild: discord.Guild,
-        ev: EventEntry,
-        ch: discord.TextChannel
+        self, guild: discord.Guild, ev: EventEntry, ch: discord.TextChannel
     ):
         try:
             now = int(time.time())
             guild_cfg = gcfg[str(guild.id)]
-            
+
             # Get ping settings for this guild
             ping_settings = get_event_ping_settings(str(guild.id))
-            
+
             # Calculate reminder times using configured offsets
             reminder_time = ev.start_epoch - (ping_settings.reminder_offset * 60)
             final_call_time = ev.start_epoch - (ping_settings.final_call_offset * 60)
-            
+
             # Send reminder ping if enabled and not past that time
             reminder_id = None
             if ping_settings.reminder_enabled and now < reminder_time:
                 await asyncio.sleep(reminder_time - now)
-                reminder_id = await self._send_event_ping(ch, guild_cfg, ping_settings.reminder_offset)
+                reminder_id = await self._send_event_ping(
+                    ch, guild_cfg, ping_settings.reminder_offset
+                )
                 if reminder_id:
                     guild_cfg.setdefault("event", {})["reminder_id"] = reminder_id
                     save_config(gcfg)
                 now = int(time.time())
-            
+
             # Send final call ping if enabled and not past that time
             if ping_settings.final_call_enabled and now < final_call_time:
                 await asyncio.sleep(final_call_time - now)
@@ -562,21 +600,23 @@ class EventScheduler(commands.Cog):
                             "Deleted reminder ping",
                             f"Guild: {guild.name} • Event: {ev.title} • ID: {ev.id}",
                             guild,
-                            ch
+                            ch,
                         )
                     except (discord.NotFound, discord.Forbidden):
                         pass
                 # Send final call ping
-                reminder_id = await self._send_event_ping(ch, guild_cfg, ping_settings.final_call_offset)
+                reminder_id = await self._send_event_ping(
+                    ch, guild_cfg, ping_settings.final_call_offset
+                )
                 if reminder_id:
                     guild_cfg.setdefault("event", {})["reminder_id"] = reminder_id
                     save_config(gcfg)
                 now = int(time.time())
-            
+
             # Wait until event start
             if now < ev.start_epoch:
                 await asyncio.sleep(ev.start_epoch - now)
-            
+
             # Delete final call ping at event start
             reminder_id = guild_cfg.get("event", {}).get("reminder_id")
             if reminder_id:
@@ -587,7 +627,7 @@ class EventScheduler(commands.Cog):
                         "Deleted final call ping",
                         f"Guild: {guild.name} • Event: {ev.title} • ID: {ev.id}",
                         guild,
-                        ch
+                        ch,
                     )
                 except (discord.NotFound, discord.Forbidden):
                     pass
@@ -603,7 +643,7 @@ class EventScheduler(commands.Cog):
                         "Updated event embed",
                         f"Guild: {guild.name} • Event: {ev.title} • ID: {ev.id}",
                         guild,
-                        ch
+                        ch,
                     )
                 except (discord.NotFound, discord.Forbidden):
                     ev.message = await ch.send(embed=embed)
@@ -612,7 +652,7 @@ class EventScheduler(commands.Cog):
                         "Created new event embed",
                         f"Guild: {guild.name} • Event: {ev.title} • ID: {ev.id}",
                         guild,
-                        ch
+                        ch,
                     )
             else:
                 ev.message = await ch.send(embed=embed)
@@ -621,7 +661,7 @@ class EventScheduler(commands.Cog):
                     "Created event embed",
                     f"Guild: {guild.name} • Event: {ev.title} • ID: {ev.id}",
                     guild,
-                    ch
+                    ch,
                 )
 
             # Persist message_id
@@ -629,6 +669,16 @@ class EventScheduler(commands.Cog):
                 if e["id"] == ev.id:
                     e["message_id"] = ev.message_id
             save_config(gcfg)
+            if firebase_enabled():
+                try:
+                    firebase_save_events(str(guild.id), guild_cfg["events"])
+                except Exception as e:
+                    live_feed.log(
+                        "Firebase save failed",
+                        f"Guild: {guild.name} • Error: {e}",
+                        guild,
+                        ch,
+                    )
 
             # 4b) Wait until event end
             now = int(time.time())
@@ -641,7 +691,7 @@ class EventScheduler(commands.Cog):
                     "Event ended",
                     f"Guild: {guild.name} • Event: {ev.title} • ID: {ev.id}",
                     guild,
-                    ch
+                    ch,
                 )
             except (discord.NotFound, discord.Forbidden):
                 pass
@@ -666,7 +716,7 @@ class EventScheduler(commands.Cog):
                     next_entry["end_epoch"],
                     guild.id,
                     next_entry.get("thumbnail", ""),
-                    next_entry.get("template_key")
+                    next_entry.get("template_key"),
                 )
                 self.events[next_ev.id] = next_ev
                 chan_id = guild_cfg.get("event", {}).get("channel_id")
@@ -674,21 +724,23 @@ class EventScheduler(commands.Cog):
                     ch = guild.get_channel(chan_id)
                 else:
                     ch = discord.utils.get(guild.text_channels, name=EVENT_CHANNEL)
-                
+
                 if not ch:
                     live_feed.log(
                         "Failed to find event channel for next event",
                         f"Guild: {guild.name} • Event: {next_ev.title} • ID: {next_ev.id}",
                         guild,
-                        None
+                        None,
                     )
                 else:
-                    next_ev.task = asyncio.create_task(self._run_event_cycle(guild, next_ev, ch))
+                    next_ev.task = asyncio.create_task(
+                        self._run_event_cycle(guild, next_ev, ch)
+                    )
                     live_feed.log(
                         "Started next event",
                         f"Guild: {guild.name} • Event: {next_ev.title} • ID: {next_ev.id} • Start: <t:{next_ev.start_epoch}:F>",
                         guild,
-                        ch
+                        ch,
                     )
 
         except asyncio.CancelledError:
@@ -696,11 +748,20 @@ class EventScheduler(commands.Cog):
                 "Event task cancelled",
                 f"Guild: {guild.name} • Event: {ev.title} • ID: {ev.id}",
                 guild,
-                ch
+                ch,
             )
             raise
 
-    async def create_event(self, interaction, title, description, s_epoch, e_epoch, thumbnail, template_key=None):
+    async def create_event(
+        self,
+        interaction,
+        title,
+        description,
+        s_epoch,
+        e_epoch,
+        thumbnail,
+        template_key=None,
+    ):
         guild = interaction.guild
         now = int(time.time())
         if s_epoch <= now:
@@ -708,7 +769,7 @@ class EventScheduler(commands.Cog):
                 "Failed to create event",
                 f"Guild: {guild.name} • Error: Start time in past • By: {interaction.user}",
                 guild,
-                interaction.channel
+                interaction.channel,
             )
             return await interaction.followup.send(
                 "❌ Time must be in the future.", ephemeral=True
@@ -721,10 +782,11 @@ class EventScheduler(commands.Cog):
                 "Failed to create event",
                 f"Guild: {guild.name} • Error: Start time too close (less than 5 minutes) • By: {interaction.user}",
                 guild,
-                interaction.channel
+                interaction.channel,
             )
             return await interaction.followup.send(
-                "❌ Start time must be at least 5 minutes in the future.", ephemeral=True
+                "❌ Start time must be at least 5 minutes in the future.",
+                ephemeral=True,
             )
 
         guild_cfg = gcfg.setdefault(str(guild.id), {})
@@ -737,18 +799,28 @@ class EventScheduler(commands.Cog):
             "end_epoch": e_epoch,
             "thumbnail": thumbnail,
             "message_id": None,
-            "template_key": template_key
+            "template_key": template_key,
         }
         ev_list = guild_cfg.setdefault("events", [])
         ev_list.append(entry)
         ev_list.sort(key=lambda x: x["start_epoch"])
         save_config(gcfg)
+        if firebase_enabled():
+            try:
+                firebase_save_events(str(guild.id), ev_list)
+            except Exception as e:
+                live_feed.log(
+                    "Firebase save failed",
+                    f"Guild: {guild.name} • Error: {e}",
+                    guild,
+                    interaction.channel,
+                )
 
         live_feed.log(
             "Created new event",
             f"Guild: {guild.name} • Event: {title} • ID: {new_id} • Start: <t:{s_epoch}:F> • By: {interaction.user}",
             guild,
-            interaction.channel
+            interaction.channel,
         )
 
         # Determine the channel
@@ -762,11 +834,11 @@ class EventScheduler(commands.Cog):
                     "Failed to find event channel",
                     f"Guild: {guild.name} • Channel ID: {chan_id}",
                     guild,
-                    None
+                    None,
                 )
                 return await interaction.followup.send(
                     "❌ Could not find event channel. Please contact an administrator.",
-                    ephemeral=True
+                    ephemeral=True,
                 )
 
         if not ch:
@@ -774,11 +846,11 @@ class EventScheduler(commands.Cog):
                 "Failed to find event channel",
                 f"Guild: {guild.name} • Channel ID: {chan_id}",
                 guild,
-                None
+                None,
             )
             return await interaction.followup.send(
                 "❌ Could not find event channel. Please contact an administrator.",
-                ephemeral=True
+                ephemeral=True,
             )
 
         # If this is the soonest event, cancel the current active event and start this one
@@ -800,7 +872,7 @@ class EventScheduler(commands.Cog):
                                 "Deleted old event message",
                                 f"Guild: {guild.name} • Event: {ev.title} • ID: {ev.id}",
                                 guild,
-                                ch
+                                ch,
                             )
                         except (discord.NotFound, discord.Forbidden):
                             pass
@@ -814,7 +886,7 @@ class EventScheduler(commands.Cog):
                 end_epoch=e_epoch,
                 guild_id=guild.id,
                 thumbnail=thumbnail or "",  # Ensure thumbnail is never None
-                template_key=template_key
+                template_key=template_key,
             )
             self.events[new_id] = ev
 
@@ -833,17 +905,29 @@ class EventScheduler(commands.Cog):
                 # If the event is already within the reminder or final call window, send the appropriate notification immediately
                 now = int(time.time())
                 ping_settings = get_event_ping_settings(str(guild.id))
-                
+
                 reminder_time = s_epoch - (ping_settings.reminder_offset * 60)
                 final_call_time = s_epoch - (ping_settings.final_call_offset * 60)
-                
-                if now >= reminder_time and now < final_call_time and ping_settings.reminder_enabled:
-                    reminder_id = await self._send_event_ping(ch, guild_cfg, ping_settings.reminder_offset)
+
+                if (
+                    now >= reminder_time
+                    and now < final_call_time
+                    and ping_settings.reminder_enabled
+                ):
+                    reminder_id = await self._send_event_ping(
+                        ch, guild_cfg, ping_settings.reminder_offset
+                    )
                     if reminder_id:
                         guild_cfg.setdefault("event", {})["reminder_id"] = reminder_id
                         save_config(gcfg)
-                elif now >= final_call_time and now < s_epoch and ping_settings.final_call_enabled:
-                    reminder_id = await self._send_event_ping(ch, guild_cfg, ping_settings.final_call_offset)
+                elif (
+                    now >= final_call_time
+                    and now < s_epoch
+                    and ping_settings.final_call_enabled
+                ):
+                    reminder_id = await self._send_event_ping(
+                        ch, guild_cfg, ping_settings.final_call_offset
+                    )
                     if reminder_id:
                         guild_cfg.setdefault("event", {})["reminder_id"] = reminder_id
                         save_config(gcfg)
@@ -853,27 +937,27 @@ class EventScheduler(commands.Cog):
                     "Failed to send event message",
                     f"Guild: {guild.name} • Event: {title} • Error: Missing permissions",
                     guild,
-                    ch
+                    ch,
                 )
                 return await interaction.followup.send(
                     "❌ Bot lacks permissions to send messages in the event channel.",
-                    ephemeral=True
+                    ephemeral=True,
                 )
             except Exception as e:
                 live_feed.log(
                     "Failed to send event message",
                     f"Guild: {guild.name} • Event: {title} • Error: {str(e)}",
                     guild,
-                    ch
+                    ch,
                 )
                 return await interaction.followup.send(
                     "❌ An error occurred while creating the event. Please try again.",
-                    ephemeral=True
+                    ephemeral=True,
                 )
 
         await interaction.followup.send(
             f"✅ Event `{new_id}` scheduled for <t:{s_epoch}:F> to <t:{e_epoch}:F>.",
-            ephemeral=True
+            ephemeral=True,
         )
 
     @app_commands.command(name="addevent", description="🏆 Schedule a new event")
@@ -882,21 +966,15 @@ class EventScheduler(commands.Cog):
             "Event creation started",
             f"Guild: {interaction.guild.name} • By: {interaction.user}",
             interaction.guild,
-            interaction.channel
+            interaction.channel,
         )
         view = AddEventView(self.bot, self)
         await interaction.response.send_message(
-            "Choose how to create your event:",
-            view=view,
-            ephemeral=True
+            "Choose how to create your event:", view=view, ephemeral=True
         )
 
     @app_commands.command(name="cancelevent", description="❌ Cancel a scheduled event")
-    async def cancelevent(
-        self,
-        interaction: discord.Interaction,
-        event_id: str
-    ):
+    async def cancelevent(self, interaction: discord.Interaction, event_id: str):
         await interaction.response.defer(ephemeral=True)
         guild = interaction.guild
         guild_cfg = gcfg.get(str(guild.id), {})
@@ -914,7 +992,7 @@ class EventScheduler(commands.Cog):
                 "Failed to cancel event",
                 f"Guild: {guild.name} • Event ID: {event_id} • Error: Not found • By: {interaction.user}",
                 guild,
-                interaction.channel
+                interaction.channel,
             )
             return await interaction.followup.send("⚠️ Unknown event ID", ephemeral=True)
         # Cancel and cleanup
@@ -931,20 +1009,32 @@ class EventScheduler(commands.Cog):
                     "Deleted event message",
                     f"Guild: {guild.name} • Event: {ev.title} • ID: {ev.id}",
                     guild,
-                    interaction.channel
+                    interaction.channel,
                 )
             except:
                 pass
         # Remove from config
         guild_cfg["events"] = [e for e in ev_list if e["id"] != event_id]
         save_config(gcfg)
+        if firebase_enabled():
+            try:
+                firebase_save_events(str(guild.id), guild_cfg["events"])
+            except Exception as e:
+                live_feed.log(
+                    "Firebase save failed",
+                    f"Guild: {guild.name} • Error: {e}",
+                    guild,
+                    interaction.channel,
+                )
         live_feed.log(
             "Cancelled event",
             f"Guild: {guild.name} • Event: {ev.title if ev else event_entry['title']} • ID: {event_id} • By: {interaction.user}",
             guild,
-            interaction.channel
+            interaction.channel,
         )
-        await interaction.followup.send(f"🗑️ Event `{event_id}` cancelled.", ephemeral=True)
+        await interaction.followup.send(
+            f"🗑️ Event `{event_id}` cancelled.", ephemeral=True
+        )
 
     @app_commands.command(name="listevents", description="📋 List all upcoming events")
     async def listevents(self, interaction: discord.Interaction):
@@ -952,24 +1042,20 @@ class EventScheduler(commands.Cog):
             "Listing events",
             f"Guild: {interaction.guild.name} • By: {interaction.user}",
             interaction.guild,
-            interaction.channel
+            interaction.channel,
         )
         await interaction.response.defer(ephemeral=True)
         guild_id = str(interaction.guild.id)
         now = int(time.time())
         # Always list from config for consistency
         all_events = gcfg.get(guild_id, {}).get("events", [])
-        upcoming = [
-            e for e in all_events
-            if e["start_epoch"] > now
-        ]
+        upcoming = [e for e in all_events if e["start_epoch"] > now]
         if not upcoming:
-            return await interaction.followup.send("📭 No events scheduled.", ephemeral=True)
+            return await interaction.followup.send(
+                "📭 No events scheduled.", ephemeral=True
+            )
         upcoming.sort(key=lambda e: e["start_epoch"])
-        embed = discord.Embed(
-            title="🏆 Upcoming Events",
-            color=discord.Color.blue()
-        )
+        embed = discord.Embed(title="🏆 Upcoming Events", color=discord.Color.blue())
         embed.set_footer(text="Kingshot Bot • Events • UTC")
         for e in upcoming:
             embed.add_field(
@@ -978,9 +1064,10 @@ class EventScheduler(commands.Cog):
                     f"Starts <t:{e['start_epoch']}:F> (<t:{e['start_epoch']}:R>)\n"
                     f"Ends   <t:{e['end_epoch']}:F> (<t:{e['end_epoch']}:R>)"
                 ),
-                inline=False
+                inline=False,
             )
         await interaction.followup.send(embed=embed, ephemeral=True)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(EventScheduler(bot))
